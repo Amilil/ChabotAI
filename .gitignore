@@ -5,3 +5,4 @@ temp/
 downloads/
 __pycache__/
 .env
+test/
