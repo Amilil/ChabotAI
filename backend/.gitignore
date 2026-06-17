@@ -1,0 +1,8 @@
+credentials.json
+token.pickle
+config.py
+temp/
+downloads/
+__pycache__/
+.env
+test/

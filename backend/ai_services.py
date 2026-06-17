@@ -1,6 +1,6 @@
 import asyncio
 import httpx
-import config
+import backend.config as config
 
 from openai import AsyncOpenAI
 

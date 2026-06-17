@@ -6,3 +6,15 @@ downloads/
 __pycache__/
 .env
 test/
+__pycache__/
+*.pyc
+
+.env
+token.pickle
+credentials.json
+
+venv/
+.venv/
+
+static/*.jpg
+static/*.png

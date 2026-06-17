@@ -1,5 +1,5 @@
 import httpx
-import config
+import backend.config as config
 
 
 def format_number(wa_id: str):

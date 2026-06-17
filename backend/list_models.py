@@ -1,7 +1,7 @@
 # list_models.py
 
 import httpx
-import config
+import backend.config as config
 
 headers = {
     "Authorization": f"Bearer {config.OPENROUTER_API_KEY}"

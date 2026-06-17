@@ -14,7 +14,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# GANTI DENGAN FOLDER ID KAMU
+#route folder id
 FOLDER_ID = "1qltHd7y8SGGFMFZvBlJwQ1PwXLwHRSBD"
 
 

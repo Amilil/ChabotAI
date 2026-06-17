@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Request
 import asyncio
 import time 
-import ai_services
+import backend.ai_services as ai_services
 
-from whatsapp_service import send_text
-from google_drive_service import upload_file_to_drive
+from backend.whatsapp_service import send_text
+from backend.google_drive_service import upload_file_to_drive
 
 app = FastAPI()
 
