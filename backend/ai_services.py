@@ -109,6 +109,27 @@ def get_size(rasio: str = "1:1", resolusi: str = "720p") -> str:
 
 
 # ==========================================
+# IMAGE SIZE — ukuran standar yang didukung model
+# ==========================================
+
+IMAGE_SIZE_MAP = {
+    "1:1":  "1024x1024",
+    "9:16": "768x1344",
+    "16:9": "1344x768",
+    "3:4":  "768x1024",
+    "4:3":  "1024x768",
+    "4:5":  "768x960",
+    "5:4":  "960x768",
+    "3:2":  "1152x768",
+    "2:3":  "768x1152",
+    "21:9": "1536x640",
+}
+
+def get_image_size(rasio: str) -> str:
+    return IMAGE_SIZE_MAP.get(rasio, "1024x1024")
+
+
+# ==========================================
 # DOWNLOAD FILE
 # ==========================================
 
@@ -235,7 +256,7 @@ async def generate_text(prompt: str) -> str:
 # ==========================================
 
 async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"):
-    size = get_size(rasio, resolusi)
+    size = get_image_size(rasio)
 
     print("\n========== IMAGE ==========")
     print("MODEL    :", config.IMAGE_MODEL)
