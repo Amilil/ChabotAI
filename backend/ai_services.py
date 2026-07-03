@@ -3,6 +3,8 @@ import httpx
 import uuid
 import os
 import base64
+import random
+import time
 
 import backend.config as config
 
@@ -31,6 +33,66 @@ print(f"[CONFIG] RAW_BASE      : {RAW_BASE_URL}")
 
 
 # ==========================================
+# RATE LIMITER (in-memory token bucket)
+# ==========================================
+
+class TokenBucket:
+    def __init__(self, rate: float, capacity: int):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_refill = time.monotonic()
+
+    def consume(self, tokens: int = 1) -> bool:
+        now = time.monotonic()
+        elapsed = now - self.last_refill
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+        self.last_refill = now
+        if self.tokens >= tokens:
+            self.tokens -= tokens
+            return True
+        return False
+
+
+_user_buckets = {}
+
+def check_rate_limit(user_id: str, max_requests: int = 3, window: int = 10) -> bool:
+    if user_id not in _user_buckets:
+        _user_buckets[user_id] = TokenBucket(max_requests / window, max_requests)
+    return _user_buckets[user_id].consume()
+
+
+# ==========================================
+# RETRY WITH EXPONENTIAL BACKOFF
+# ==========================================
+
+async def _retry_with_backoff(coro_factory, max_retries=3, base_delay=2, label="AI"):
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await coro_factory()
+        except (AuthenticationError, BudgetExceededError) as e:
+            raise
+        except Exception as e:
+            code = None
+            if hasattr(e, 'status_code'):
+                code = e.status_code
+            elif hasattr(e, 'code'):
+                code = e.code
+
+            if code in (400, 401, 403, 404):
+                raise
+
+            if attempt == max_retries:
+                raise
+
+            delay = base_delay * (2 ** (attempt - 1)) * random.uniform(0.75, 1.25)
+            print(f"[RETRY/{label}] Attempt {attempt}/{max_retries}" +
+                  (f" HTTP {code}" if code else "") +
+                  f": {type(e).__name__}. Retry in {delay:.1f}s...")
+            await asyncio.sleep(delay)
+
+
+# ==========================================
 # BUDGET GUARD
 # ==========================================
 
@@ -55,10 +117,17 @@ def _raise_if_budget_exceeded(response: httpx.Response):
             "⚠️ Budget API harian telah habis. Silakan hubungi admin untuk menaikkan limit."
         )
 
-# Client untuk text (OpenAI SDK)
+# Client untuk text (OpenAI SDK) — LiteLLM
 client_text = AsyncOpenAI(
     api_key=config.LOCAL_API_KEY,
     base_url=OPENAI_BASE_URL,
+    timeout=TIMEOUT
+)
+
+# Client untuk Groq (OpenAI-compatible)
+client_groq = AsyncOpenAI(
+    api_key=config.GROQ_API_KEY or "",
+    base_url="https://api.groq.com/openai/v1",
     timeout=TIMEOUT
 )
 
@@ -173,89 +242,430 @@ async def download_file(url: str, extension: str):
 # ==========================================
 
 async def generate_text(prompt: str) -> str:
+    primary = (config.TEXT_PROVIDER or "litellm").lower()
+
+    # Provider chain: primary → fallback
+    providers = []
+    if primary == "groq":
+        if not config.GROQ_API_KEY:
+            print("[TEXT] GROQ_API_KEY tidak dikonfigurasi, fallback ke LiteLLM")
+        else:
+            providers.append(("groq", client_groq, config.TEXT_MODEL))
+        providers.append(("litellm", client_text, config.LITELLM_TEXT_MODEL))
+    else:
+        providers.append(("litellm", client_text, config.LITELLM_TEXT_MODEL))
+        if config.GROQ_API_KEY:
+            providers.append(("groq", client_groq, config.TEXT_MODEL))
+
     print("\n========== TEXT ==========")
-    print("OPENAI_BASE_URL :", OPENAI_BASE_URL)
-    print("MODEL           :", config.TEXT_MODEL)
+    print("PRIMARY PROVIDER:", primary)
     print("PROMPT          :", prompt[:100], "..." if len(prompt) > 100 else "")
 
+    last_error = None
+    for pname, _client, _model in providers:
+        print(f"[TEXT/{pname}] Mencoba provider (model: {_model})...")
+
+        try:
+            response = await _retry_with_backoff(
+                lambda: asyncio.wait_for(
+                    _client.chat.completions.create(
+                        model=_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=1000,
+                        temperature=0.7
+                    ),
+                    timeout=120
+                ),
+                max_retries=2,
+                base_delay=2,
+                label=f"TEXT/{pname}"
+            )
+
+        except asyncio.TimeoutError as e:
+            print(f"[TEXT/{pname}] Timeout: {e}")
+            last_error = Exception("AI text timeout — tidak ada respons dalam 120 detik")
+            continue
+
+        except AuthenticationError as e:
+            print(f"[TEXT/{pname}] Authentication error: {e}")
+            if pname == providers[-1][0]:
+                raise Exception("API key tidak valid atau tidak punya akses ke model text")
+            last_error = Exception(f"API key {pname} tidak valid")
+            continue
+
+        except RateLimitError as e:
+            print(f"[TEXT/{pname}] Rate limit: {e}")
+            last_error = Exception("Terlalu banyak request ke AI, coba lagi beberapa saat")
+            continue
+
+        except APITimeoutError as e:
+            print(f"[TEXT/{pname}] API timeout: {e}")
+            last_error = Exception("AI text timeout — server tidak merespons")
+            continue
+
+        except APIConnectionError as e:
+            print(f"[TEXT/{pname}] Tidak bisa koneksi: {e}")
+            last_error = Exception("Tidak bisa koneksi ke server AI — cek koneksi internet")
+            continue
+
+        except APIStatusError as e:
+            status = e.status_code
+            body = e.response.text[:300] if hasattr(e, 'response') else str(e)
+            print(f"[TEXT/{pname}] API status error {status}: {body}")
+
+            if status == 400:
+                raise Exception("Request text tidak valid — coba prompt yang berbeda")
+            elif status == 403:
+                raise Exception("Request text di-block oleh content filter server")
+            elif status == 404:
+                raise Exception(f"Model text '{_model}' tidak ditemukan di server")
+            elif status == 429:
+                last_error = Exception("Rate limit server AI — coba lagi beberapa saat")
+                continue
+            elif status >= 500:
+                last_error = Exception(f"Server AI sedang bermasalah (HTTP {status}) — coba lagi")
+                continue
+            else:
+                raise Exception(f"AI text error HTTP {status}: {body}")
+
+        except Exception as e:
+            if "API key" in str(e):
+                raise
+            print(f"[TEXT/{pname}] Error tidak terduga: {type(e).__name__}: {e}")
+            last_error = Exception(f"Error tidak terduga saat generate text: {type(e).__name__}: {e}")
+            continue
+
+        if not response.choices or not response.choices[0].message.content:
+            print(f"[TEXT/{pname}] Respons kosong dari AI")
+            last_error = Exception("AI mengembalikan respons kosong")
+            continue
+
+        result = response.choices[0].message.content.strip()
+        if not result:
+            print(f"[TEXT/{pname}] Teks kosong")
+            last_error = Exception("AI mengembalikan teks kosong")
+            continue
+
+        print(f"\n========== SUCCESS ({pname}) ==========")
+        print(result[:200])
+        print("=============================")
+
+        return result
+
+    raise last_error or Exception("Semua provider text gagal")
+
+
+# ==========================================
+# IMAGE — Gemini (primary) + LiteLLM (fallback)
+# ==========================================
+
+async def _generate_image_gemini(prompt: str, rasio: str = "1:1") -> str:
+    from google import genai
+    from google.genai import types
+    from google.genai.errors import ClientError, APIError
+    import time
+
+    if not config.GEMINI_API_KEY:
+        raise Exception("GEMINI_API_KEY belum dikonfigurasi")
+
+    size = get_image_size(rasio)
+
+    print("\n========== IMAGE (Gemini) ==========")
+    print("PROVIDER  : Gemini")
+    print("MODEL     :", config.IMAGE_MODEL)
+    print("PROMPT    :", prompt[:100])
+    print("RASIO     :", rasio)
+
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
+
+    start_time = time.time()
     try:
-        response = await asyncio.wait_for(
-            client_text.chat.completions.create(
-                model=config.TEXT_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000,
-                temperature=0.7
+        response = await _retry_with_backoff(
+            lambda: client.aio.models.generate_content(
+                model=config.IMAGE_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["Image", "Text"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio=rasio,
+                    ),
+                ),
             ),
-            timeout=120
+            max_retries=3,
+            base_delay=2,
+            label="IMAGE/GEMINI"
         )
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/GEMINI] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/GEMINI] HTTP Status: 200")
 
-    except asyncio.TimeoutError:
-        print("[TEXT] asyncio timeout 120 detik")
-        raise Exception("AI text timeout — tidak ada respons dalam 120 detik")
+    except ClientError as e:
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/GEMINI] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/GEMINI] HTTP Status: {e.code}")
+        print(f"[IMAGE/GEMINI] Exception Type: ClientError")
+        print(f"[IMAGE/GEMINI] Status: {e.status}")
+        print(f"[IMAGE/GEMINI] Message: {e.message}")
 
-    except AuthenticationError as e:
-        print(f"[TEXT] Authentication error: {e}")
-        raise Exception("API key tidak valid atau tidak punya akses ke model text")
-
-    except RateLimitError as e:
-        print(f"[TEXT] Rate limit: {e}")
-        raise Exception("Terlalu banyak request ke AI, coba lagi beberapa saat")
-
-    except APITimeoutError as e:
-        print(f"[TEXT] API timeout: {e}")
-        raise Exception("AI text timeout — server tidak merespons")
-
-    except APIConnectionError as e:
-        print(f"[TEXT] Tidak bisa koneksi ke server AI: {e}")
-        raise Exception("Tidak bisa koneksi ke server AI — cek koneksi internet")
-
-    except APIStatusError as e:
-        status = e.status_code
-        body   = e.response.text[:300] if hasattr(e, 'response') else str(e)
-        print(f"[TEXT] API status error {status}: {body}")
-
-        if status == 400:
-            raise Exception("Request text tidak valid — coba prompt yang berbeda")
-        elif status == 403:
-            raise Exception("Request text di-block oleh content filter server")
-        elif status == 404:
-            raise Exception(f"Model text '{config.TEXT_MODEL}' tidak ditemukan di server")
-        elif status == 429:
-            raise Exception("Rate limit server AI — coba lagi beberapa saat")
-        elif status >= 500:
-            raise Exception(f"Server AI sedang bermasalah (HTTP {status}) — coba lagi")
+        if e.code == 429:
+            raise Exception("Kuota Gemini API hari ini sudah habis. Silakan coba lagi besok atau gunakan API key lain.")
+        elif e.code == 401 or (e.status and "PERMISSION_DENIED" in str(e.status)):
+            raise Exception("API key Gemini tidak valid atau belum memiliki akses.")
+        elif e.code == 404:
+            raise Exception("Model Gemini tidak ditemukan.")
         else:
-            raise Exception(f"AI text error HTTP {status}: {body}")
+            raise Exception(f"Gemini API error (HTTP {e.code}): {e.message or 'Unknown error'}")
+
+    except APIError as e:
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/GEMINI] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/GEMINI] HTTP Status: {e.code}")
+        print(f"[IMAGE/GEMINI] Exception Type: APIError")
+        print(f"[IMAGE/GEMINI] Message: {e.message}")
+        raise Exception(f"Gemini API error: {e.message or 'Unknown error'}")
+
+    except httpx.ConnectError as e:
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/GEMINI] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/GEMINI] Exception Type: httpx.ConnectError")
+        print(f"[IMAGE/GEMINI] Detail: {e}")
+        raise Exception("Tidak dapat terhubung ke server Gemini. Periksa koneksi internet, firewall, VPN, atau proxy.")
+
+    except (httpx.TimeoutException, asyncio.TimeoutError) as e:
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/GEMINI] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/GEMINI] Exception Type: {type(e).__name__}")
+        raise Exception("Request ke Gemini timeout.")
 
     except Exception as e:
-        # Tangkap semua error lain yang tidak terduga
-        # Pastikan tidak swallow error yang sudah di-raise di atas
-        if "AI text" in str(e) or "Request text" in str(e) or "Model text" in str(e) or "Rate limit" in str(e) or "API key" in str(e):
-            raise
-        print(f"[TEXT] Error tidak terduga: {type(e).__name__}: {e}")
-        raise Exception(f"Error tidak terduga saat generate text: {type(e).__name__}: {e}")
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/GEMINI] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/GEMINI] Exception Type: {type(e).__name__}")
+        print(f"[IMAGE/GEMINI] Error: {e}")
+        raise Exception(f"Gagal generate gambar lewat Gemini: {e}")
 
-    if not response.choices or not response.choices[0].message.content:
-        print("[TEXT] Respons kosong dari AI")
-        raise Exception("AI mengembalikan respons kosong")
+    if not response.candidates:
+        print("[IMAGE/GEMINI] Tidak ada kandidat dalam respons")
+        raise Exception("Gemini tidak mengembalikan kandidat gambar")
 
-    result = response.choices[0].message.content.strip()
-    if not result:
-        raise Exception("AI mengembalikan teks kosong")
+    image_bytes = None
+    for part in response.candidates[0].content.parts:
+        if part.inline_data and part.inline_data.mime_type and part.inline_data.mime_type.startswith("image/"):
+            image_bytes = part.inline_data.data
+            break
 
-    print("\n========== SUCCESS ==========")
-    print(result[:200])
-    print("=============================")
+    if not image_bytes:
+        print("[IMAGE/GEMINI] Tidak ada inline_data gambar dalam respons")
+        raise Exception("Gemini tidak mengembalikan data gambar")
 
-    return result
+    try:
+        os.makedirs("generated", exist_ok=True)
+    except OSError as e:
+        print(f"[IMAGE/GEMINI] Gagal buat folder: {e}")
+        raise Exception(f"Gagal buat folder penyimpanan: {e}")
+
+    filename = f"generated/{uuid.uuid4()}.png"
+    try:
+        with open(filename, "wb") as f:
+            f.write(image_bytes)
+        print(f"[IMAGE/GEMINI] Berhasil simpan ke: {filename}")
+        print("\n========== SUCCESS ==========")
+        print(filename)
+        print("=============================")
+        return filename
+    except OSError as e:
+        print(f"[IMAGE/GEMINI] Gagal simpan file: {e}")
+        raise Exception(f"Gagal simpan gambar ke disk: {e}")
 
 
 # ==========================================
-# IMAGE (pakai httpx langsung, bukan OpenAI SDK)
-# Karena endpoint image LiteLLM butuh /v1/images/generations
+# IMAGE — Cloudflare Workers AI
 # ==========================================
+
+async def _generate_image_cloudflare(prompt: str, rasio: str = "1:1") -> str:
+    import time
+
+    if not config.CLOUDFLARE_API_TOKEN:
+        raise Exception("CLOUDFLARE_API_TOKEN belum dikonfigurasi di .env")
+
+    if not config.CLOUDFLARE_ACCOUNT_ID:
+        raise Exception("CLOUDFLARE_ACCOUNT_ID belum dikonfigurasi di .env")
+
+    model = config.CF_IMAGE_MODEL or "@cf/black-forest-labs/flux-1-schnell"
+    account_id = config.CLOUDFLARE_ACCOUNT_ID
+    endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+
+    size_str = get_image_size(rasio)
+    parts = size_str.split("x")
+    width = int(parts[0]) if len(parts) == 2 else 1024
+    height = int(parts[1]) if len(parts) == 2 else 1024
+
+    print("\n========== IMAGE (Cloudflare) ==========")
+    print("PROVIDER  : Cloudflare")
+    print("MODEL     :", model)
+    print("PROMPT    :", prompt[:100])
+    print("RASIO     :", rasio)
+    print("SIZE      :", size_str)
+
+    start_time = time.time()
+
+    async def _post():
+        async with httpx.AsyncClient(timeout=120) as client:
+            return await client.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {config.CLOUDFLARE_API_TOKEN}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "prompt": prompt,
+                    "width": width,
+                    "height": height,
+                }
+            )
+
+    try:
+        response = await _retry_with_backoff(
+            _post,
+            max_retries=3,
+            base_delay=2,
+            label="IMAGE/CLOUDFLARE"
+        )
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/CLOUDFLARE] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: {response.status_code}")
+
+    except httpx.TimeoutException as e:
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/CLOUDFLARE] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/CLOUDFLARE] Exception Type: httpx.TimeoutException")
+        raise Exception("Request ke Cloudflare AI timeout — server terlalu lambat merespons")
+
+    except httpx.ConnectError as e:
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/CLOUDFLARE] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/CLOUDFLARE] Exception Type: httpx.ConnectError")
+        raise Exception("Tidak dapat terhubung ke Cloudflare AI. Periksa koneksi internet, firewall, atau VPN.")
+
+    except Exception as e:
+        elapsed = time.time() - start_time
+        print(f"[IMAGE/CLOUDFLARE] Response Time: {elapsed:.2f}s")
+        print(f"[IMAGE/CLOUDFLARE] Exception Type: {type(e).__name__}")
+        print(f"[IMAGE/CLOUDFLARE] Error: {e}")
+        raise
+
+    status = response.status_code
+
+    content_type = response.headers.get("content-type", "")
+    error_detail = ""
+    if "json" in content_type:
+        try:
+            err_json = response.json()
+            if err_json.get("errors"):
+                error_detail = str(err_json["errors"])
+            elif not err_json.get("success"):
+                error_detail = str(err_json.get("errors", err_json))
+        except Exception:
+            pass
+    if not error_detail:
+        error_detail = response.text[:300]
+
+    if status == 401:
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: 401")
+        print(f"[IMAGE/CLOUDFLARE] Response Body: {error_detail}")
+        raise Exception("API token Cloudflare tidak valid — periksa CLOUDFLARE_API_TOKEN di .env")
+    elif status == 403:
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: 403")
+        print(f"[IMAGE/CLOUDFLARE] Response Body: {error_detail}")
+        raise Exception("API token Cloudflare tidak memiliki izin akses Workers AI")
+    elif status == 404:
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: 404")
+        print(f"[IMAGE/CLOUDFLARE] Response Body: {error_detail}")
+        raise Exception(f"Model '{model}' tidak ditemukan — atau Account ID salah")
+    elif status == 408:
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: 408")
+        print(f"[IMAGE/CLOUDFLARE] Response Body: {error_detail}")
+        raise Exception("Request timeout — Cloudflare AI tidak merespons tepat waktu")
+    elif status == 429:
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: 429")
+        print(f"[IMAGE/CLOUDFLARE] Response Body: {error_detail}")
+        raise Exception("Rate limit Cloudflare AI tercapai — coba lagi beberapa saat")
+    elif status >= 500:
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: {status}")
+        print(f"[IMAGE/CLOUDFLARE] Response Body: {error_detail}")
+        raise Exception(f"Server Cloudflare AI bermasalah (HTTP {status}) — coba lagi nanti")
+    elif status != 200:
+        print(f"[IMAGE/CLOUDFLARE] HTTP Status: {status}")
+        print(f"[IMAGE/CLOUDFLARE] Response Body: {error_detail}")
+        raise Exception(f"Cloudflare AI mengembalikan HTTP {status}")
+
+    # Cloudflare Workers AI returns Base64 in JSON, not raw binary
+    try:
+        body = response.json()
+    except Exception as e:
+        print(f"[IMAGE/CLOUDFLARE] Response is not valid JSON: {e}")
+        print(f"[IMAGE/CLOUDFLARE] Body: {response.text[:400]}")
+        raise Exception("Cloudflare AI mengembalikan data yang tidak valid")
+
+    if "result" not in body:
+        print(f"[IMAGE/CLOUDFLARE] Missing 'result' in response")
+        print(f"[IMAGE/CLOUDFLARE] Body: {str(body)[:200]}")
+        raise Exception("Format respons Cloudflare AI tidak valid")
+
+    result = body["result"]
+
+    if "image" not in result:
+        print(f"[IMAGE/CLOUDFLARE] Missing 'image' in result")
+        if error_detail:
+            print(f"[IMAGE/CLOUDFLARE] error_detail: {error_detail}")
+        raise Exception("Cloudflare AI tidak mengembalikan data gambar")
+
+    image_b64 = result["image"]
+
+    if not image_b64 or len(image_b64) < 100:
+        print(f"[IMAGE/CLOUDFLARE] Base64 content too small or empty ({len(image_b64) if image_b64 else 0} chars)")
+        raise Exception("Cloudflare AI mengembalikan Base64 yang tidak valid")
+
+    try:
+        image_bytes = base64.b64decode(image_b64)
+    except Exception as e:
+        print(f"[IMAGE/CLOUDFLARE] Base64 decode failed: {e}")
+        raise Exception("Gagal mendekode data Base64 dari Cloudflare AI")
+
+    if len(image_bytes) < 100:
+        print(f"[IMAGE/CLOUDFLARE] Decoded image size too small ({len(image_bytes)} bytes)")
+        raise Exception("Cloudflare AI tidak mengembalikan data gambar yang valid")
+
+    try:
+        os.makedirs("generated", exist_ok=True)
+    except OSError as e:
+        print(f"[IMAGE/CLOUDFLARE] Gagal buat folder: {e}")
+        raise Exception(f"Gagal buat folder penyimpanan: {e}")
+
+    filename = f"generated/{uuid.uuid4()}.png"
+    try:
+        with open(filename, "wb") as f:
+            f.write(image_bytes)
+        print(f"[IMAGE/CLOUDFLARE] Berhasil simpan ke: {filename}")
+        print("\n========== SUCCESS ==========")
+        print(filename)
+        print("=============================")
+        return filename
+    except OSError as e:
+        print(f"[IMAGE/CLOUDFLARE] Gagal simpan file: {e}")
+        raise Exception(f"Gagal simpan gambar ke disk: {e}")
+
 
 async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"):
+    provider = (config.IMAGE_PROVIDER or "litellm").lower()
+
+    if provider == "cloudflare":
+        return await _generate_image_cloudflare(prompt, rasio=rasio)
+
+    if provider == "gemini":
+        return await _generate_image_gemini(prompt, rasio=rasio)
+
+    # LiteLLM fallback — unchanged
     size = get_image_size(rasio)
 
     print("\n========== IMAGE ==========")
@@ -266,9 +676,9 @@ async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"
     endpoint = f"{RAW_BASE_URL}/v1/images/generations"
     print("ENDPOINT :", endpoint)
 
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
+    async def _post_image():
+        async with httpx.AsyncClient(timeout=120) as c:
+            return await c.post(
                 endpoint,
                 headers={
                     "Authorization": f"Bearer {config.LOCAL_API_KEY}",
@@ -280,6 +690,14 @@ async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"
                     "size": size
                 }
             )
+
+    try:
+        response = await _retry_with_backoff(
+            _post_image,
+            max_retries=3,
+            base_delay=2,
+            label="IMAGE/LITELLM"
+        )
 
     except httpx.TimeoutException as e:
         print(f"[IMAGE] Timeout: {e}")
