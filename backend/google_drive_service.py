@@ -8,6 +8,7 @@ from googleapiclient.http import MediaFileUpload
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 
 
 SCOPES = [
@@ -32,16 +33,21 @@ def get_drive_service():
     if not creds or not creds.valid:
 
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                print("[Google Drive] Refresh token invalid. Starting OAuth login again...")
+                if os.path.exists("token.pickle"):
+                    os.remove("token.pickle")
+                creds = None
 
-        else:
-
+        if not creds:
             flow = InstalledAppFlow.from_client_secrets_file(
                 "credentials.json",
                 SCOPES
             )
 
-            creds = flow.run_local_server(port=0)
+            creds = flow.run_local_server(port=0, prompt="consent")
 
         # SAVE TOKEN
         with open("token.pickle", "wb") as token:
