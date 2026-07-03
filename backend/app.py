@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 import asyncio
 import time
 import backend.ai_services as ai_services
-from backend.ai_services import BudgetExceededError
+from backend.ai_services import BudgetExceededError, check_rate_limit
 
 from backend.whatsapp_service import send_text
 from backend.google_drive_service import upload_file_to_drive
@@ -186,6 +186,10 @@ MSG_ERROR_UPLOAD = """⚠️ Konten berhasil dibuat, namun gagal upload ke Drive
 
 Silakan coba lagi atau hubungi admin jika masalah berlanjut."""
 
+MSG_RATE_LIMITED = """⏳ Terlalu banyak permintaan.
+
+Silakan tunggu beberapa saat sebelum mengirim pesan lagi."""
+
 # =====================================
 # HELPER
 # =====================================
@@ -285,6 +289,11 @@ async def handle_message(sender_number: str, incoming_msg: str):
 
     # Perpanjang timer setiap kali user mengirim pesan
     reset_timeout(sender_number)
+
+    # ===== RATE LIMITER =====
+    if not check_rate_limit(sender_number):
+        await send_text(sender_number, MSG_RATE_LIMITED)
+        return {"status": "rate_limited"}
 
     user_state = user_states[sender_number]
     print(f"STEP: {user_state['step']}")
