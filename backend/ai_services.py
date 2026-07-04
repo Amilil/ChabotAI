@@ -777,6 +777,11 @@ async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"
 # VIDEO
 # ==========================================
 
+async def _generate_video_vertex(prompt: str, rasio: str = "1:1", resolusi: str = "720p") -> str:
+    from backend.video.vertex_provider import generate_video_vertex as _vertex_gen
+    return await _vertex_gen(prompt, rasio=rasio, resolusi=resolusi)
+
+
 async def _post_video(client: httpx.AsyncClient, prompt: str, size: str) -> httpx.Response:
     """Helper: kirim satu request POST video ke LiteLLM."""
     return await client.post(
@@ -805,6 +810,11 @@ def _extract_video_url(data: dict) -> str | None:
 
 
 async def generate_video(prompt: str, rasio: str = "1:1", resolusi: str = "720p"):
+    provider = (config.VIDEO_PROVIDER or "litellm").lower()
+
+    if provider == "vertex":
+        return await _generate_video_vertex(prompt, rasio=rasio, resolusi=resolusi)
+
     size = get_size(rasio, resolusi)
 
     print("\n========== VIDEO ==========")
