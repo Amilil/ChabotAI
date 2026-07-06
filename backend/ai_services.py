@@ -512,7 +512,7 @@ async def _generate_image_cloudflare(prompt: str, rasio: str = "1:1") -> str:
     async def _post():
         async with httpx.AsyncClient(timeout=120) as client:
             return await client.post(
-                endpoint,
+                endpoint,   
                 headers={
                     "Authorization": f"Bearer {config.CLOUDFLARE_API_TOKEN}",
                     "Content-Type": "application/json"
@@ -968,9 +968,15 @@ async def generate_video_with_caption(prompt: str, rasio: str = "1:1", resolusi:
     if not video:
         return None
 
-    caption = await generate_text(
-        f"Create a professional, engaging social media caption (max 3 sentences) in Indonesian language for: {prompt}"
-    )
+    print("[CAPTION] Start")
+    try:
+        caption = await generate_text(
+            f"Create a professional, engaging social media caption (max 3 sentences) in Indonesian language for: {prompt}"
+        )
+        print("[CAPTION] Success")
+    except Exception as e:
+        print(f"[CAPTION] Failed: {e}")
+        caption = None
 
     return {
         "video": video,
