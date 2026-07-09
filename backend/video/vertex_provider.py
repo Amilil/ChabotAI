@@ -348,56 +348,6 @@ async def generate_video_vertex(prompt: str, rasio: str = "1:1", resolusi: str =
         )
 
     # ── DEBUG: struktu objek response ──
-    print("\n========== VERTEX DEBUG ==========")
-    print("[DEBUG] type(operation.response):", type(response).__name__)
-    print("[DEBUG] dir(response):", [a for a in dir(response) if not a.startswith('_')])
-    try:
-        print("[DEBUG] response.model_dump():", response.model_dump())
-    except Exception as ex:
-        print(f"[DEBUG] response.model_dump() FAILED: {ex}")
-    try:
-        print("[DEBUG] vars(response):", vars(response))
-    except Exception as ex:
-        print(f"[DEBUG] vars(response) FAILED: {ex}")
-
-    print("\n--- generated_videos ---")
-    print("[DEBUG] type(generated_videos):", type(generated_videos).__name__)
-    print("[DEBUG] len(generated_videos):", len(generated_videos))
-    for i, gv in enumerate(generated_videos):
-        print(f"\n--- generated_videos[{i}] ---")
-        print(f"[DEBUG] type: {type(gv).__name__}")
-        print(f"[DEBUG] dir: {[a for a in dir(gv) if not a.startswith('_')]}")
-        try:
-            print(f"[DEBUG] model_dump: {gv.model_dump()}")
-        except Exception as ex:
-            print(f"[DEBUG] model_dump FAILED: {ex}")
-        try:
-            print(f"[DEBUG] vars: {vars(gv)}")
-        except Exception as ex:
-            print(f"[DEBUG] vars FAILED: {ex}")
-
-    print("\n--- generated_video.video ---")
-    print(f"[DEBUG] type(video_obj): {type(video_obj).__name__}")
-    print(f"[DEBUG] dir(video_obj): {[a for a in dir(video_obj) if not a.startswith('_')]}")
-    print(f"[DEBUG] repr(video_obj): {repr(video_obj)}")
-    try:
-        print(f"[DEBUG] video_obj.model_dump(): {video_obj.model_dump()}")
-    except Exception as ex:
-        print(f"[DEBUG] video_obj.model_dump() FAILED: {ex}")
-    try:
-        print(f"[DEBUG] vars(video_obj): {vars(video_obj)}")
-    except Exception as ex:
-        print(f"[DEBUG] vars(video_obj) FAILED: {ex}")
-
-    for field in ['uri', 'name', 'file', 'gcs_uri', 'download_uri', 'mime_type', 'video_bytes', 'data']:
-        val = getattr(video_obj, field, None)
-        if val is not None:
-            preview = str(val)[:200]
-            print(f"[DEBUG] video_obj.{field}: {preview}")
-        else:
-            print(f"[DEBUG] video_obj.{field}: (None / tidak ada)")
-    print("======================================\n")
-    # ── END DEBUG ──
 
     # ── download ──
     try:

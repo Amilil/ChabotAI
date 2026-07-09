@@ -333,7 +333,7 @@ async def handle_message(sender_number: str, incoming_msg: str):
 
             try:
                 caption = await ai_services.generate_text(
-                    f"Create a professional, attractive, and engaging social media caption in Indonesian language for: {prompt}"
+                    f"Create a professional, engaging social media caption (max 3 sentences) in Indonesian language for: {prompt}"
                 )
             except Exception as e:
                 return await handle_ai_error(sender_number, e)
