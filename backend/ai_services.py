@@ -202,6 +202,11 @@ def get_image_size(rasio: str) -> str:
 # DOWNLOAD FILE
 # ==========================================
 
+def _write_file_sync(path: str, content: bytes):
+    with open(path, "wb") as f:
+        f.write(content)
+
+
 async def download_file(url: str, extension: str):
     try:
         os.makedirs("generated", exist_ok=True)
@@ -215,8 +220,7 @@ async def download_file(url: str, extension: str):
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.get(url)
             response.raise_for_status()
-            with open(filename, "wb") as f:
-                f.write(response.content)
+            await asyncio.to_thread(_write_file_sync, filename, response.content)
         print(f"[DOWNLOAD] Berhasil simpan ke: {filename}")
         return filename
 
