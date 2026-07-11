@@ -20,6 +20,7 @@ FOLDER_ID = "1SQD0yp8TNTePRNaEYSiDhFPUeP2w3T26"
 
 
 def get_drive_service():
+    """Authenticate and return a Google Drive API service instance."""
 
     creds = None
 
@@ -65,7 +66,16 @@ def get_drive_service():
 drive_service = get_drive_service()
 
 
-def upload_file_to_drive(file_path, mime_type):
+def upload_file_to_drive(file_path, mime_type) -> str:
+    """Upload a file to Google Drive and return a publicly shareable link."""
+
+    import traceback
+
+    print("[DRIVE] Upload started")
+    print(f"[DRIVE] File path: {file_path}")
+    print(f"[DRIVE] File exists: {os.path.exists(file_path)}")
+    print(f"[DRIVE] File size: {os.path.getsize(file_path)} bytes")
+    print(f"[DRIVE] MIME: {mime_type}")
 
     file_name = os.path.basename(file_path)
 
@@ -74,28 +84,56 @@ def upload_file_to_drive(file_path, mime_type):
         "parents": [FOLDER_ID]
     }
 
+    print("[DRIVE] Creating MediaFileUpload...")
     media = MediaFileUpload(
         file_path,
         mimetype=mime_type
     )
 
-    uploaded_file = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id"
-    ).execute()
+    print("[DRIVE] Calling files.create()...")
+    try:
+        uploaded_file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id"
+        ).execute()
+    except Exception as e:
+        print("[DRIVE][ERROR]")
+        print(f"STEP: files.create()")
+        print(f"TYPE: {type(e).__name__}")
+        print(f"MESSAGE: {e}")
+        print(f"REPR: {repr(e)}")
+        print(f"TRACEBACK:")
+        traceback.print_exc()
+        raise
 
     file_id = uploaded_file.get("id")
+    print(f"[DRIVE] files.create() success")
+    print(f"[DRIVE] File ID: {file_id}")
 
-    # PUBLIC ACCESS
-    drive_service.permissions().create(
-        fileId=file_id,
-        body={
-            "role": "reader",
-            "type": "anyone"
-        }
-    ).execute()
+    print("[DRIVE] Setting public permission...")
+    try:
+        drive_service.permissions().create(
+            fileId=file_id,
+            body={
+                "role": "reader",
+                "type": "anyone"
+            }
+        ).execute()
+    except Exception as e:
+        print("[DRIVE][ERROR]")
+        print(f"STEP: permissions.create()")
+        print(f"TYPE: {type(e).__name__}")
+        print(f"MESSAGE: {e}")
+        print(f"REPR: {repr(e)}")
+        print(f"TRACEBACK:")
+        traceback.print_exc()
+        raise
 
+    print("[DRIVE] Permission success")
+
+    print("[DRIVE] Building share link...")
     public_url = f"https://drive.google.com/file/d/{file_id}/view"
 
+    print("[DRIVE] Upload finished")
     return public_url
