@@ -4,7 +4,8 @@ from backend.whatsapp_service import send_text
 from backend.messages import MSG_WELCOME, MSG_MENU
 
 
-async def handle_global_commands(sender_number: str, incoming_msg: str):
+async def handle_global_commands(sender_number: str, incoming_msg: str) -> dict | None:
+    """Handle global commands like reset, restart, and help."""
     if incoming_msg.lower() in ["reset", "mulai", "restart", "/start"]:
         cancel_timeout(sender_number)
         user_states.pop(sender_number, None)
@@ -19,14 +20,16 @@ async def handle_global_commands(sender_number: str, incoming_msg: str):
     return None
 
 
-async def handle_new_user(sender_number: str):
+async def handle_new_user(sender_number: str) -> dict:
+    """Send welcome message to a new user and initialize state."""
     user_states[sender_number] = {"step": "waiting_prompt"}
     reset_timeout(sender_number)
     await send_text(sender_number, MSG_WELCOME)
     return {"status": "welcome_sent"}
 
 
-async def handle_waiting_prompt(sender_number: str, incoming_msg: str, user_state: dict):
+async def handle_waiting_prompt(sender_number: str, incoming_msg: str, user_state: dict) -> dict:
+    """Save user prompt and transition to menu selection."""
     user_state["prompt"] = incoming_msg
     user_state["step"] = "waiting_menu"
     await send_text(sender_number, MSG_MENU.format(prompt=incoming_msg))

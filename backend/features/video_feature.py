@@ -9,6 +9,7 @@ from backend.messages import MSG_FEATURE_WIP, MSG_ERROR_UPLOAD
 
 
 async def handle_video_generation(sender_number: str, prompt: str, rasio: str, resolusi: str) -> dict:
+    """Generate a video, upload to Drive, and send the link to the user."""
     await send_text(sender_number, f"🎬 Membuat video... ({rasio} / {resolusi})\nProses ini membutuhkan waktu lebih lama.")
     try:
         video_result = await ai_services.generate_video(prompt, rasio=rasio, resolusi=resolusi)

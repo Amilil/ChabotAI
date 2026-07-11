@@ -12,6 +12,7 @@ POLL_TIMEOUT = 600
 
 def _parse_gcs_uri(uri: str):
     """Parse gs://bucket-name/object/path into (bucket_name, object_path)."""
+    """Parse gs://bucket-name/object/path into (bucket_name, object_path)."""
     if not uri or not uri.startswith("gs://"):
         raise ValueError(f"URI bukan GCS path yang valid: {uri}")
     parts = uri[5:].split("/", 1)
@@ -94,6 +95,7 @@ async def _download_video(video_obj, local_path):
 
 
 async def generate_video_vertex(prompt: str, rasio: str = "1:1", resolusi: str = "720p") -> str:
+    """Generate a video using Google Vertex AI (Veo) with GCS output and download."""
     from google import genai
     from google.genai import types
 

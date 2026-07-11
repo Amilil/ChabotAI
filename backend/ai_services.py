@@ -59,6 +59,7 @@ class TokenBucket:
 _user_buckets = {}
 
 def check_rate_limit(user_id: str, max_requests: int = 3, window: int = 10) -> bool:
+    """Check if user is within rate limit using a token bucket algorithm."""
     if user_id not in _user_buckets:
         _user_buckets[user_id] = TokenBucket(max_requests / window, max_requests)
     return _user_buckets[user_id].consume()
@@ -69,6 +70,7 @@ def check_rate_limit(user_id: str, max_requests: int = 3, window: int = 10) -> b
 # ==========================================
 
 async def _retry_with_backoff(coro_factory, max_retries=3, base_delay=2, label="AI"):
+    """Retry an async coroutine factory with exponential backoff, skipping non-retryable errors."""
     for attempt in range(1, max_retries + 1):
         try:
             return await coro_factory()
@@ -160,6 +162,7 @@ RASIO_MAP = {
 }
 
 def get_size(rasio: str = "1:1", resolusi: str = "720p") -> str:
+    """Calculate pixel dimensions from aspect ratio and resolution."""
     # Clamp resolusi ke maksimal 720p
     if resolusi not in RESOLUSI_ALLOWED:
         resolusi = RESOLUSI_MAX
@@ -205,6 +208,7 @@ def get_image_size(rasio: str) -> str:
 # ==========================================
 
 async def generate_text(prompt: str) -> str:
+    """Generate text using the configured provider with automatic fallback."""
     primary = (config.TEXT_PROVIDER or "litellm").lower()
 
     # Provider chain: primary → fallback
@@ -619,7 +623,8 @@ async def _generate_image_cloudflare(prompt: str, rasio: str = "1:1") -> str:
         raise Exception(f"Gagal simpan gambar ke disk: {e}")
 
 
-async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"):
+async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p") -> str | None:
+    """Generate an image using the configured provider (Gemini, Cloudflare, or LiteLLM)."""
     provider = (config.IMAGE_PROVIDER or "litellm").lower()
 
     if provider == "cloudflare":
@@ -741,6 +746,7 @@ async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"
 # ==========================================
 
 async def _generate_video_vertex(prompt: str, rasio: str = "1:1", resolusi: str = "720p") -> str:
+    """Delegate video generation to Vertex AI provider."""
     from backend.video.vertex_provider import generate_video_vertex as _vertex_gen
     return await _vertex_gen(prompt, rasio=rasio, resolusi=resolusi)
 
@@ -772,7 +778,8 @@ def _extract_video_url(data: dict) -> str | None:
     return data.get("url") or data.get("video_url")
 
 
-async def generate_video(prompt: str, rasio: str = "1:1", resolusi: str = "720p"):
+async def generate_video(prompt: str, rasio: str = "1:1", resolusi: str = "720p") -> str | None:
+    """Generate a video using the configured provider (Vertex AI or LiteLLM)."""
     provider = (config.VIDEO_PROVIDER or "litellm").lower()
 
     if provider == "vertex":
@@ -905,7 +912,7 @@ async def generate_video(prompt: str, rasio: str = "1:1", resolusi: str = "720p"
 # IMAGE + CAPTION
 # ==========================================
 
-async def generate_image_with_caption(prompt: str, rasio: str = "1:1", resolusi: str = "720p"):
+async def generate_image_with_caption(prompt: str, rasio: str = "1:1", resolusi: str = "720p") -> dict | None:
     image = await generate_image(prompt, rasio=rasio, resolusi=resolusi)
 
     if not image:
@@ -925,7 +932,7 @@ async def generate_image_with_caption(prompt: str, rasio: str = "1:1", resolusi:
 # VIDEO + CAPTION
 # ==========================================
 
-async def generate_video_with_caption(prompt: str, rasio: str = "1:1", resolusi: str = "720p"):
+async def generate_video_with_caption(prompt: str, rasio: str = "1:1", resolusi: str = "720p") -> dict | None:
     video = await generate_video(prompt, rasio=rasio, resolusi=resolusi)
 
     if not video:

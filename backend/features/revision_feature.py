@@ -7,6 +7,7 @@ from backend.messages import MSG_CAPTION_DONE, MSG_CAPTION_REVISED
 
 
 async def handle_caption_revision(sender_number: str, incoming_msg: str, user_state: dict) -> dict:
+    """Handle caption revision requests or finish the caption flow."""
     if incoming_msg.upper() == "SELESAI":
         cancel_timeout(sender_number)
         user_states[sender_number] = {"step": "waiting_prompt"}

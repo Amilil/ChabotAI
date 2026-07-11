@@ -9,6 +9,7 @@ from backend.messages import MSG_FEATURE_WIP, MSG_ERROR_UPLOAD
 
 
 async def handle_image_generation(sender_number: str, prompt: str, rasio: str, resolusi: str) -> dict:
+    """Generate an image, upload to Drive, and send the link to the user."""
     await send_text(sender_number, f"🎨 Membuat gambar... ({rasio} / {resolusi})")
     try:
         image_result = await ai_services.generate_image(prompt, rasio=rasio, resolusi=resolusi)

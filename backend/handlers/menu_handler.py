@@ -5,7 +5,8 @@ from backend.messages import MSG_INVALID_MENU, MSG_CANCELLED, MSG_RASIO
 from backend.features.caption_feature import handle_caption_generation
 
 
-async def handle_waiting_menu(sender_number: str, incoming_msg: str, user_state: dict):
+async def handle_waiting_menu(sender_number: str, incoming_msg: str, user_state: dict) -> dict:
+    """Validate menu choice and route to aspect ratio or caption generation."""
     if incoming_msg not in ["0", "1", "2", "3", "4", "5"]:
         await send_text(sender_number, MSG_INVALID_MENU)
         return {"status": "invalid_menu"}

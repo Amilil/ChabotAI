@@ -2,7 +2,8 @@ import httpx
 import backend.config as config
 
 
-def format_number(wa_id: str):
+def format_number(wa_id: str) -> str | None:
+    """Normalize WhatsApp ID by appending @c.us suffix if needed."""
     if not wa_id:
         return None
 
@@ -20,7 +21,8 @@ def format_number(wa_id: str):
     return wa_id
 
 
-async def send_text(to, text):
+async def send_text(to, text) -> dict | None:
+    """Send a text message via WAHA API."""
     if not text:
         print("[WAHA] Empty text blocked")
         return None

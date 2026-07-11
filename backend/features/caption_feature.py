@@ -6,6 +6,7 @@ from backend.messages import MSG_CAPTION_REVISION
 
 
 async def handle_caption_generation(sender_number: str, prompt: str) -> dict:
+    """Generate a caption and transition to revision state."""
     user_state = user_states[sender_number]
     user_state["step"] = "generating"
 

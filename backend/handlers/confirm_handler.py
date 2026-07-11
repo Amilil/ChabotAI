@@ -4,7 +4,8 @@ from backend.whatsapp_service import send_text
 from backend.messages import MSG_CANCELLED
 
 
-async def handle_waiting_konfirmasi(sender_number: str, incoming_msg: str, user_state: dict):
+async def handle_waiting_konfirmasi(sender_number: str, incoming_msg: str, user_state: dict) -> dict:
+    """Validate confirmation and return generation parameters if confirmed."""
     if incoming_msg.lower() in ["batal", "tidak", "no"]:
         cancel_timeout(sender_number)
         user_states.pop(sender_number, None)

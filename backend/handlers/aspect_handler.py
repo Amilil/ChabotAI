@@ -3,7 +3,8 @@ from backend.whatsapp_service import send_text
 from backend.messages import MSG_INVALID_RASIO, MSG_RESOLUSI
 
 
-async def handle_waiting_rasio(sender_number: str, incoming_msg: str, user_state: dict):
+async def handle_waiting_rasio(sender_number: str, incoming_msg: str, user_state: dict) -> dict:
+    """Validate aspect ratio selection and transition to resolution choice."""
     if incoming_msg not in RASIO_OPTIONS:
         await send_text(sender_number, MSG_INVALID_RASIO)
         return {"status": "invalid_rasio"}

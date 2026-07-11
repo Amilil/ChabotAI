@@ -6,6 +6,7 @@ from backend.ai_services import BudgetExceededError
 
 
 async def handle_ai_error(sender_number: str, e: Exception) -> dict:
+    """Map AI exceptions to user-friendly error messages and reset state."""
     if isinstance(e, BudgetExceededError):
         print(f"[BUDGET ERROR] {e}")
         await send_text(sender_number, MSG_ERROR_BUDGET)

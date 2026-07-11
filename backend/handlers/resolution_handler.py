@@ -3,7 +3,8 @@ from backend.whatsapp_service import send_text
 from backend.messages import MSG_INVALID_RESOLUSI, MSG_KONFIRMASI_GENERATE
 
 
-async def handle_waiting_resolusi(sender_number: str, incoming_msg: str, user_state: dict):
+async def handle_waiting_resolusi(sender_number: str, incoming_msg: str, user_state: dict) -> dict:
+    """Validate resolution selection and transition to confirmation."""
     if incoming_msg not in RESOLUSI_OPTIONS:
         await send_text(sender_number, MSG_INVALID_RESOLUSI)
         return {"status": "invalid_resolusi"}
