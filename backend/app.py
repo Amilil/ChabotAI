@@ -1,298 +1,41 @@
 from fastapi import FastAPI, Request
 import asyncio
 import time
-import backend.ai_services as ai_services
-from backend.ai_services import BudgetExceededError, check_rate_limit
+from backend.ai_services import check_rate_limit
 
 from backend.whatsapp_service import send_text
-from backend.google_drive_service import upload_file_to_drive
+from backend.messages import MSG_RATE_LIMITED
+from backend.services.session_service import user_states, user_locks, user_timeout_tasks, processed_messages, get_msg_id
+from backend.services.timeout_service import reset_timeout
+from backend.handlers.prompt_handler import handle_global_commands, handle_new_user, handle_waiting_prompt
+from backend.handlers.menu_handler import handle_waiting_menu
+from backend.handlers.aspect_handler import handle_waiting_rasio
+from backend.handlers.resolution_handler import handle_waiting_resolusi
+from backend.handlers.confirm_handler import handle_waiting_konfirmasi
+from backend.features.image_feature import handle_image_generation
+from backend.features.video_feature import handle_video_generation
+from backend.features.caption_feature import handle_caption_generation
+from backend.features.image_caption_feature import handle_image_caption_generation
+from backend.features.video_caption_feature import handle_video_caption_generation
+from backend.features.revision_feature import handle_caption_revision
 
 app = FastAPI()
 
 BOT_START_TIME = int(time.time())
 
-# Anti duplicate message
-processed_messages = set()
-
-# State management
-user_states = {}
-
-# Per-user lock to prevent race conditions
-user_locks = {}
-
-# Auto-timeout: timer task per user (cancel session jika idle 2 menit)
-user_timeout_tasks = {}
-SESSION_TIMEOUT = 120  # detik
-
-# =====================================
-# KONSTANTA RASIO & RESOLUSI
-# =====================================
-
-RASIO_OPTIONS = {
-    "1":  {"label": "1:1",  "desc": "Square — Feed"},
-    "2":  {"label": "9:16", "desc": "Portrait — Story/Reels"},
-    "3":  {"label": "16:9", "desc": "Landscape — YouTube/Banner"},
-    "4":  {"label": "3:4",  "desc": "Portrait — Feed"},
-    "5":  {"label": "4:3",  "desc": "Landscape — Presentasi"},
-    "6":  {"label": "4:5",  "desc": "Portrait — Feed Instagram"},
-    "7":  {"label": "5:4",  "desc": "Landscape — Feed"},
-    "8":  {"label": "3:2",  "desc": "Landscape — Foto"},
-    "9":  {"label": "2:3",  "desc": "Portrait — Foto"},
-    "10": {"label": "21:9", "desc": "Ultrawide — Cinematic"},
-}
-
-RESOLUSI_OPTIONS = {
-    "1": {"label": "480p", "desc": "Cepat, ukuran kecil"},
-    "2": {"label": "720p", "desc": "Standar, kualitas baik"},
-}
-
-# =====================================
-# PESAN - PESAN BOT
-# =====================================
-
-MSG_WELCOME = """👋 Selamat Datang di AI Content Generator
-Saya dapat membantu mengubah ide atau deskripsi Anda menjadi:
-
-1. Gambar
-2. Video
-3. Gambar + Caption
-4. Video + Caption
-5. Caption
-
-✏️ Cara Penggunaan
-Kirimkan ide atau deskripsi konten yang ingin dibuat.
-Contoh:
-• Kucing astronaut berjalan di bulan
-• Promosi kopi kekinian
-• Pantai tropis saat matahari terbenam
-
-Setelah menerima deskripsi Anda, saya akan menanyakan jenis konten yang ingin dibuat.
-Silakan kirim ide atau deskripsi konten Anda."""
-
-MSG_MENU = """✅ Prompt diterima
-
-Prompt:
-{prompt}
-
-Pilih jenis konten yang ingin dibuat:
-
-1. Gambar
-2. Video
-3. Gambar + Caption
-4. Video + Caption
-5. Caption
-0. Batal
-
-Balas dengan ANGKA saja."""
-
-MSG_RASIO = """📐 Pilih rasio gambar:
-
-1. 1:1   — Square (Feed)
-2. 9:16  — Portrait (Story/Reels)
-3. 16:9  — Landscape (YouTube/Banner)
-4. 3:4   — Portrait (Feed)
-5. 4:3   — Landscape (Presentasi)
-6. 4:5   — Portrait (Feed Instagram)
-7. 5:4   — Landscape (Feed)
-8. 3:2   — Landscape (Foto)
-9. 2:3   — Portrait (Foto)
-10. 21:9  — Ultrawide (Cinematic)
-
-Balas dengan ANGKA saja."""
-
-MSG_RESOLUSI = """Rasio dipilih: {rasio} ({desc_rasio})
-
-📏 Pilih resolusi output:
-
-1. 480p  — Cepat, ukuran kecil
-2. 720p  — Standar, kualitas baik
-
-Balas dengan ANGKA saja."""
-
-MSG_KONFIRMASI_GENERATE = """🔍 Konfirmasi Generate
-
-Prompt   : {prompt}
-Rasio    : {rasio} ({desc_rasio})
-Resolusi : {resolusi}
-
-Ketik YA untuk lanjut atau BATAL untuk membatalkan."""
-
-MSG_INVALID_MENU = """❌ Pilihan tidak valid.
-
-Balas dengan ANGKA sesuai menu:
-
-1. Gambar
-2. Video
-3. Gambar + Caption
-4. Video + Caption
-5. Caption
-0. Batal"""
-
-MSG_INVALID_RASIO = """❌ Pilihan rasio tidak valid.
-
-Balas dengan angka 1-9 sesuai pilihan di atas."""
-
-MSG_INVALID_RESOLUSI = """❌ Pilihan resolusi tidak valid.
-
-Balas dengan angka 1-2 sesuai pilihan di atas."""
-
-MSG_CANCELLED = """🚫 Proses dibatalkan.
-
-Silakan kirim ide atau deskripsi konten baru untuk memulai lagi."""
-
-MSG_SESSION_TIMEOUT = """⏰ Sesi Anda telah berakhir karena tidak ada aktivitas selama 2 menit.
-
-Silakan kirim ide atau deskripsi konten baru untuk memulai kembali."""
-
-MSG_CAPTION_REVISION = """{caption}
-
----
-💡 Jika ingin mengembangkan atau merevisi caption ini, langsung kirim instruksinya.
-
-Contoh:
-• buat lebih profesional
-• lebih santai
-• tambahkan CTA
-• tambahkan hashtag
-
-Ketik SELESAI jika sudah selesai."""
-
-MSG_CAPTION_REVISED = """{caption}
-
----
-💡 Mau revisi lagi? Langsung kirim instruksinya.
-Ketik SELESAI jika sudah selesai."""
-
-MSG_CAPTION_DONE = """✅ Caption sudah selesai.
-
-Silakan kirim ide baru untuk membuat konten berikutnya."""
-
-MSG_FEATURE_WIP = """⚠️ Fitur {fitur} masih dalam pengembangan.
-
-Sementara Anda bisa menggunakan menu 5 (Caption).
-Kirim ide baru untuk mencoba lagi."""
-
-MSG_ERROR_GENERAL = """⚠️ Terjadi kendala teknis.
-
-Silakan coba kirim ulang pesan Anda. Jika masih error, tunggu beberapa saat."""
-
-MSG_ERROR_BUDGET = """⚠️ Budget API harian telah habis.
-
-Pembuatan konten tidak dapat dilakukan sementara ini. Silakan hubungi admin atau coba lagi besok."""
-
-MSG_ERROR_CONTENT_FILTER = """⚠️ Deskripsi kamu tidak dapat diproses karena terdeteksi oleh content filter.
-
-Coba gunakan deskripsi yang berbeda dan hindari kata-kata yang sensitif."""
-
-MSG_ERROR_UPLOAD = """⚠️ Konten berhasil dibuat, namun gagal upload ke Drive.
-
-Silakan coba lagi atau hubungi admin jika masalah berlanjut."""
-
-MSG_RATE_LIMITED = """⏳ Terlalu banyak permintaan.
-
-Silakan tunggu beberapa saat sebelum mengirim pesan lagi."""
-
-# =====================================
-# HELPER
-# =====================================
-
-def get_msg_id(payload: dict) -> str:
-    msg_id = (
-        payload.get("id")
-        or payload.get("messageId")
-        or payload.get("_data", {}).get("id", {}).get("_serialized")
-    )
-    if not msg_id:
-        sender = payload.get("from", "")
-        body = payload.get("body") or payload.get("text") or ""
-        timestamp = payload.get("timestamp", "")
-        msg_id = f"{sender}_{timestamp}_{body[:30]}"
-    return msg_id
-
-
-# =====================================
-# TIMEOUT HELPERS
-# =====================================
-
-def cancel_timeout(sender_number: str):
-    """Batalkan timer timeout yang sedang berjalan untuk user ini."""
-    task = user_timeout_tasks.pop(sender_number, None)
-    if task and not task.done():
-        task.cancel()
-
-
-async def _timeout_worker(sender_number: str):
-    """Coroutine yang menunggu SESSION_TIMEOUT detik, lalu reset sesi user."""
-    try:
-        await asyncio.sleep(SESSION_TIMEOUT)
-    except asyncio.CancelledError:
-        return  # Timer dibatalkan karena user aktif kembali
-
-    # Cek apakah user masih dalam sesi aktif (bukan step generating)
-    state = user_states.get(sender_number)
-    if state and state.get("step") != "generating":
-        print(f"[TIMEOUT] Reset sesi user {sender_number} karena idle {SESSION_TIMEOUT}s")
-        user_states.pop(sender_number, None)
-        user_timeout_tasks.pop(sender_number, None)
-        await send_text(sender_number, MSG_SESSION_TIMEOUT)
-
-
-def reset_timeout(sender_number: str):
-    """Cancel timer lama dan mulai timer baru untuk user ini."""
-    cancel_timeout(sender_number)
-    task = asyncio.create_task(_timeout_worker(sender_number))
-    user_timeout_tasks[sender_number] = task
-
-
-async def handle_ai_error(sender_number: str, e: Exception) -> dict:
-    """Kirim pesan error yang tepat ke user berdasarkan jenis error."""
-    if isinstance(e, BudgetExceededError):
-        print(f"[BUDGET ERROR] {e}")
-        await send_text(sender_number, MSG_ERROR_BUDGET)
-        cancel_timeout(sender_number)
-    elif "di-block" in str(e).lower() or "content filter" in str(e).lower() or "blocked" in str(e).lower():
-        print(f"[CONTENT FILTER] {e}")
-        await send_text(sender_number, MSG_ERROR_CONTENT_FILTER)
-    else:
-        print("AI ERROR:", e)
-        await send_text(sender_number, MSG_ERROR_GENERAL)
-    user_states[sender_number] = {"step": "waiting_prompt"}
-    reset_timeout(sender_number)
-    return {"status": "ai_error"}
-
 
 async def handle_message(sender_number: str, incoming_msg: str):
     """Core message handler — runs inside per-user lock."""
 
-    # =====================================
-    # COMMAND GLOBAL
-    # =====================================
-
-    if incoming_msg.lower() in ["reset", "mulai", "restart", "/start"]:
-        cancel_timeout(sender_number)
-        user_states.pop(sender_number, None)
-        await send_text(sender_number, MSG_WELCOME)
-        return {"status": "reset"}
-
-    if incoming_msg.lower() in ["help", "bantuan", "/help"]:
-        reset_timeout(sender_number)
-        await send_text(sender_number, MSG_WELCOME)
-        return {"status": "help"}
-
-    # =====================================
-    # USER BARU
-    # =====================================
+    result = await handle_global_commands(sender_number, incoming_msg)
+    if result:
+        return result
 
     if sender_number not in user_states:
-        user_states[sender_number] = {"step": "waiting_prompt"}
-        reset_timeout(sender_number)
-        await send_text(sender_number, MSG_WELCOME)
-        return {"status": "welcome_sent"}
+        return await handle_new_user(sender_number)
 
-    # Perpanjang timer setiap kali user mengirim pesan
     reset_timeout(sender_number)
 
-    # ===== RATE LIMITER =====
     if not check_rate_limit(sender_number):
         await send_text(sender_number, MSG_RATE_LIMITED)
         return {"status": "rate_limited"}
@@ -300,309 +43,39 @@ async def handle_message(sender_number: str, incoming_msg: str):
     user_state = user_states[sender_number]
     print(f"STEP: {user_state['step']}")
 
-    # =====================================
-    # STEP: WAITING PROMPT
-    # =====================================
-
     if user_state["step"] == "waiting_prompt":
-        user_state["prompt"] = incoming_msg
-        user_state["step"] = "waiting_menu"
-        await send_text(sender_number, MSG_MENU.format(prompt=incoming_msg))
-        return {"status": "menu_sent"}
-
-    # =====================================
-    # STEP: WAITING MENU
-    # =====================================
+        return await handle_waiting_prompt(sender_number, incoming_msg, user_state)
 
     if user_state["step"] == "waiting_menu":
-
-        if incoming_msg not in ["0", "1", "2", "3", "4", "5"]:
-            await send_text(sender_number, MSG_INVALID_MENU)
-            return {"status": "invalid_menu"}
-
-        if incoming_msg == "0":
-            cancel_timeout(sender_number)
-            user_states.pop(sender_number, None)
-            await send_text(sender_number, MSG_CANCELLED)
-            return {"status": "cancelled"}
-
-        user_state["menu"] = incoming_msg
-
-        if incoming_msg == "5":
-            user_state["step"] = "generating"
-            await send_text(sender_number, "✏️ Membuat caption...")
-            prompt = user_state.get("prompt", "")
-
-            try:
-                caption = await ai_services.generate_text(
-                    f"Create a professional, engaging social media caption (max 3 sentences) in Indonesian language for: {prompt}"
-                )
-            except Exception as e:
-                return await handle_ai_error(sender_number, e)
-
-            user_states[sender_number] = {
-                "step": "waiting_caption_revision",
-                "original_prompt": prompt,
-                "last_caption": caption
-            }
-            await send_text(sender_number, MSG_CAPTION_REVISION.format(caption=caption))
-            return {"status": "caption_done"}
-
-        user_state["step"] = "waiting_rasio"
-        await send_text(sender_number, MSG_RASIO)
-        return {"status": "rasio_asked"}
-
-    # =====================================
-    # STEP: WAITING RASIO
-    # =====================================
+        return await handle_waiting_menu(sender_number, incoming_msg, user_state)
 
     if user_state["step"] == "waiting_rasio":
-
-        if incoming_msg not in RASIO_OPTIONS:
-            await send_text(sender_number, MSG_INVALID_RASIO)
-            return {"status": "invalid_rasio"}
-
-        rasio_data = RASIO_OPTIONS[incoming_msg]
-        user_state["rasio"] = rasio_data["label"]
-        user_state["rasio_desc"] = rasio_data["desc"]
-        user_state["step"] = "waiting_resolusi"
-
-        await send_text(
-            sender_number,
-            MSG_RESOLUSI.format(rasio=rasio_data["label"], desc_rasio=rasio_data["desc"])
-        )
-        return {"status": "resolusi_asked"}
-
-    # =====================================
-    # STEP: WAITING RESOLUSI
-    # =====================================
+        return await handle_waiting_rasio(sender_number, incoming_msg, user_state)
 
     if user_state["step"] == "waiting_resolusi":
-
-        if incoming_msg not in RESOLUSI_OPTIONS:
-            await send_text(sender_number, MSG_INVALID_RESOLUSI)
-            return {"status": "invalid_resolusi"}
-
-        resolusi_data = RESOLUSI_OPTIONS[incoming_msg]
-        user_state["resolusi"] = resolusi_data["label"]
-        user_state["step"] = "waiting_konfirmasi"
-
-        await send_text(
-            sender_number,
-            MSG_KONFIRMASI_GENERATE.format(
-                prompt=user_state["prompt"],
-                rasio=user_state["rasio"],
-                desc_rasio=user_state["rasio_desc"],
-                resolusi=resolusi_data["label"]
-            )
-        )
-        return {"status": "konfirmasi_asked"}
-
-    # =====================================
-    # STEP: WAITING KONFIRMASI
-    # =====================================
+        return await handle_waiting_resolusi(sender_number, incoming_msg, user_state)
 
     if user_state["step"] == "waiting_konfirmasi":
+        result = await handle_waiting_konfirmasi(sender_number, incoming_msg, user_state)
+        if result["status"] != "confirmed":
+            return result
 
-        if incoming_msg.lower() in ["batal", "tidak", "no"]:
-            cancel_timeout(sender_number)
-            user_states.pop(sender_number, None)
-            await send_text(sender_number, MSG_CANCELLED)
-            return {"status": "cancelled"}
+        prompt = result["prompt"]
+        menu = result["menu"]
+        rasio = result["rasio"]
+        resolusi = result["resolusi"]
 
-        if incoming_msg.lower() not in ["ya", "yes", "iya"]:
-            await send_text(sender_number, "Ketik YA untuk lanjut atau BATAL untuk membatalkan.")
-            return {"status": "invalid_konfirmasi"}
-
-        prompt   = user_state.get("prompt", "")
-        menu     = user_state.get("menu", "")
-        rasio    = user_state.get("rasio", "1:1")
-        resolusi = user_state.get("resolusi", "720p")
-
-        # Tandai sedang generate supaya tidak bisa diinterupsi
-        user_state["step"] = "generating"
-        cancel_timeout(sender_number)  # Jangan timeout saat proses generate
-
-        # ================= GAMBAR =================
         if menu == "1":
-            await send_text(sender_number, f"🎨 Membuat gambar... ({rasio} / {resolusi})")
-            try:
-                image_result = await ai_services.generate_image(prompt, rasio=rasio, resolusi=resolusi)
-            except Exception as e:
-                return await handle_ai_error(sender_number, e)
-
-            if not image_result:
-                await send_text(sender_number, MSG_FEATURE_WIP.format(fitur="Gambar"))
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "feature_wip"}
-
-            try:
-                drive_link = await asyncio.to_thread(upload_file_to_drive, image_result, "image/png")
-            except Exception as e:
-                print("DRIVE ERROR:", e)
-                await send_text(sender_number, MSG_ERROR_UPLOAD)
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "drive_error"}
-
-            user_states[sender_number] = {"step": "waiting_prompt"}
-            reset_timeout(sender_number)
-            await send_text(
-                sender_number,
-                f"✅ Gambar berhasil dibuat!\nRasio: {rasio} | Resolusi: {resolusi}\n\n{drive_link}\n\nSilakan kirim ide baru untuk membuat konten berikutnya."
-            )
-            return {"status": "image_done"}
-
-        # ================= VIDEO =================
+            return await handle_image_generation(sender_number, prompt, rasio, resolusi)
         if menu == "2":
-            await send_text(sender_number, f"🎬 Membuat video... ({rasio} / {resolusi})\nProses ini membutuhkan waktu lebih lama.")
-            try:
-                video_result = await ai_services.generate_video(prompt, rasio=rasio, resolusi=resolusi)
-            except Exception as e:
-                return await handle_ai_error(sender_number, e)
-
-            if not video_result:
-                await send_text(sender_number, MSG_FEATURE_WIP.format(fitur="Video"))
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "feature_wip"}
-
-            try:
-                drive_link = await asyncio.to_thread(upload_file_to_drive, video_result, "video/mp4")
-            except Exception as e:
-                print("DRIVE ERROR:", e)
-                await send_text(sender_number, MSG_ERROR_UPLOAD)
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "drive_error"}
-
-            user_states[sender_number] = {"step": "waiting_prompt"}
-            reset_timeout(sender_number)
-            await send_text(
-                sender_number,
-                f"✅ Video berhasil dibuat!\nRasio: {rasio} | Resolusi: {resolusi}\n\n{drive_link}\n\nSilakan kirim ide baru untuk membuat konten berikutnya."
-            )
-            return {"status": "video_done"}
-
-        # ================= GAMBAR + CAPTION =================
+            return await handle_video_generation(sender_number, prompt, rasio, resolusi)
         if menu == "3":
-            await send_text(sender_number, f"🎨✏️ Membuat gambar dan caption... ({rasio} / {resolusi})")
-            try:
-                result = await ai_services.generate_image_with_caption(prompt, rasio=rasio, resolusi=resolusi)
-            except Exception as e:
-                return await handle_ai_error(sender_number, e)
-
-            if not result:
-                await send_text(sender_number, MSG_FEATURE_WIP.format(fitur="Gambar + Caption"))
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "feature_wip"}
-
-            try:
-                drive_link = await asyncio.to_thread(upload_file_to_drive, result["image"], "image/png")
-            except Exception as e:
-                print("DRIVE ERROR:", e)
-                await send_text(sender_number, MSG_ERROR_UPLOAD)
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "drive_error"}
-
-            user_states[sender_number] = {
-                "step": "waiting_caption_revision",
-                "original_prompt": prompt,
-                "last_caption": result["caption"]
-            }
-            reset_timeout(sender_number)
-            await send_text(sender_number, f"✅ Gambar selesai! ({rasio} / {resolusi})\n{drive_link}")
-            await send_text(sender_number, MSG_CAPTION_REVISION.format(caption=result["caption"]))
-            return {"status": "image_caption_done"}
-
-        # ================= VIDEO + CAPTION =================
+            return await handle_image_caption_generation(sender_number, prompt, rasio, resolusi)
         if menu == "4":
-            await send_text(sender_number, f"🎬✏️ Membuat video dan caption... ({rasio} / {resolusi})")
-            try:
-                result = await ai_services.generate_video_with_caption(prompt, rasio=rasio, resolusi=resolusi)
-            except Exception as e:
-                return await handle_ai_error(sender_number, e)
-
-            if not result:
-                await send_text(sender_number, MSG_FEATURE_WIP.format(fitur="Video + Caption"))
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "feature_wip"}
-
-            print("[VIDEO] Generate success")
-
-            try:
-                drive_link = await asyncio.to_thread(upload_file_to_drive, result["video"], "video/mp4")
-            except Exception as e:
-                print("DRIVE ERROR:", e)
-                await send_text(sender_number, MSG_ERROR_UPLOAD)
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                return {"status": "drive_error"}
-
-            print("[VIDEO] Upload Drive success")
-
-            if result["caption"]:
-                user_states[sender_number] = {
-                    "step": "waiting_caption_revision",
-                    "original_prompt": prompt,
-                    "last_caption": result["caption"]
-                }
-                reset_timeout(sender_number)
-                full_msg = (
-                    f"✅ Video berhasil dibuat!\n\n"
-                    f"🔗 Link Video\n{drive_link}\n\n"
-                    f"📝 Caption\n{result['caption']}\n\n"
-                    f"---\n"
-                    f"Silakan ketik revisi caption jika ingin mengubah caption.\n"
-                    f"Ketik SELESAI jika sudah sesuai."
-                )
-            else:
-                user_states[sender_number] = {"step": "waiting_prompt"}
-                reset_timeout(sender_number)
-                full_msg = (
-                    f"✅ Video berhasil dibuat!\n\n"
-                    f"🔗 Link Video\n{drive_link}\n\n"
-                    f"⚠️ Caption gagal dibuat.\n"
-                    f"Silakan pilih menu Caption jika ingin membuat caption secara terpisah."
-                )
-
-            await send_text(sender_number, full_msg)
-            print("[WHATSAPP] Final response sent")
-            return {"status": "video_caption_done"}
-
-    # =====================================
-    # STEP: WAITING CAPTION REVISION
-    # =====================================
+            return await handle_video_caption_generation(sender_number, prompt, rasio, resolusi)
 
     if user_state["step"] == "waiting_caption_revision":
-
-        if incoming_msg.upper() == "SELESAI":
-            cancel_timeout(sender_number)
-            user_states[sender_number] = {"step": "waiting_prompt"}
-            await send_text(sender_number, MSG_CAPTION_DONE)
-            return {"status": "revision_finished"}
-
-        await send_text(sender_number, "✏️ Merevisi caption...")
-
-        try:
-            new_caption = await ai_services.generate_text(
-                f"""You are a professional copywriter. Write all output in Indonesian language.
-
-Original topic: {user_state['original_prompt']}
-
-Current caption:
-{user_state['last_caption']}
-
-Revision instruction: {incoming_msg}
-
-Task: Revise the caption according to the instruction. Keep the original context, stay on topic. Output in Indonesian."""
-            )
-        except Exception as e:
-            return await handle_ai_error(sender_number, e)
-
-        user_state["last_caption"] = new_caption
-        await send_text(sender_number, MSG_CAPTION_REVISED.format(caption=new_caption))
-        return {"status": "caption_revised"}
-
-    # =====================================
-    # FALLBACK
-    # =====================================
+        return await handle_caption_revision(sender_number, incoming_msg, user_state)
 
     user_states[sender_number] = {"step": "waiting_prompt"}
     await send_text(

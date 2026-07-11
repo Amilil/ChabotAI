@@ -316,38 +316,82 @@ async def generate_video_vertex(prompt: str, rasio: str = "1:1", resolusi: str =
             )
     elapsed_generate = time.time() - start_time
     print(f"[VERTEX] Response Time: {elapsed_generate:.2f}s")
+    print(f"[VERTEX] Operation done: {operation.done}")
+
+    # ── cek error dari Vertex AI ──
+    # error bertipe dict[str, Any] | None — berisi code, message, status
+    error = operation.error
+    if error:
+        error_code = error.get("code", 0)
+        error_msg = error.get("message", "tidak ada detail")
+        error_status = error.get("status", "")
+        print(f"[VERTEX] Operation error code: {error_code}")
+        print(f"[VERTEX] Operation error message: {error_msg}")
+        print(f"[VERTEX] Operation error status: {error_status}")
+        raise Exception(
+            f"Vertex AI gagal memproses video.\n\n"
+            f"Kode error: {error_code}\n"
+            f"Status: {error_status}\n"
+            f"Pesan: {error_msg}\n\n"
+            f"Coba prompt yang berbeda atau periksa log di Google Cloud Console."
+        )
 
     # ── ambil hasil ──
-    try:
-        response = operation.response
-    except Exception as e:
+    # SDK merekomendasikan operation.result (sama dengan operation.response)
+    result = operation.result
+    if result is None:
+        print(f"[VERTEX] Result is None — Vertex API tidak mengembalikan response")
+        print(f"[VERTEX] Operation name: {operation.name}")
+        print(f"[VERTEX] Operation metadata: {operation.metadata}")
         raise Exception(
-            f"Gagal membaca response dari Vertex AI.\n\n"
-            f"Detail teknis: {e}"
-        )
-
-    if not response:
-        raise Exception(
-            "Vertex AI mengembalikan response kosong.\n"
-            "Coba generate ulang atau periksa log di Google Cloud Console."
-        )
-
-    generated_videos = getattr(response, 'generated_videos', None)
-    if not generated_videos or len(generated_videos) == 0:
-        raise Exception(
-            "Vertex AI tidak mengembalikan video apapun dalam response.\n"
+            "Vertex AI menyelesaikan operasi tanpa mengembalikan data video.\n\n"
+            "Kemungkinan penyebab:\n"
+            "1. Prompt tidak didukung untuk generate video\n"
+            "2. Content filter memblokir output\n"
+            "3. Konfigurasi model atau bucket tidak sesuai\n\n"
             "Coba prompt yang berbeda atau periksa log di Google Cloud Console."
         )
 
-    video_obj = generated_videos[0].video if hasattr(generated_videos[0], 'video') else generated_videos[0]
+    print(f"[VERTEX] Result type: {type(result).__name__}")
 
-    if not video_obj:
+    # ── cek generated_videos ──
+    # result adalah GenerateVideosResponse — Pydantic model
+    generated_videos = result.generated_videos
+
+    if generated_videos is None:
+        print(f"[VERTEX] Response.generated_videos is None")
+        print(f"[VERTEX] Response fields: {result.model_fields_set}")
         raise Exception(
-            "Struktur response Vertex AI tidak mengandung objek video.\n"
-            f"Response keys: {dir(response) if hasattr(response, '__dir__') else 'N/A'}"
+            "Response Vertex AI tidak mengandung field 'generated_videos'.\n\n"
+            "Coba prompt yang berbeda atau periksa log di Google Cloud Console."
         )
 
-    # ── DEBUG: struktu objek response ──
+    video_count = len(generated_videos)
+    print(f"[VERTEX] Generated videos: {video_count} video(s)")
+
+    if video_count == 0:
+        print(f"[VERTEX] RAI filtered count: {result.rai_media_filtered_count}")
+        print(f"[VERTEX] RAI filtered reasons: {result.rai_media_filtered_reasons}")
+        raise Exception(
+            "Vertex AI mengembalikan response kosong (0 video).\n\n"
+            "Kemungkinan penyebab:\n"
+            "1. Prompt menghasilkan output kosong\n"
+            "2. Model tidak dapat memproses prompt yang diberikan\n"
+            "3. Content filter memblokir output\n"
+            f"{'4. Alasan filter: ' + str(result.rai_media_filtered_reasons) if result.rai_media_filtered_reasons else ''}"
+        )
+
+    # generated_videos[0] adalah GeneratedVideo — Pydantic model
+    first_video = generated_videos[0]
+    video_obj = first_video.video
+
+    if video_obj is None:
+        print(f"[VERTEX] GeneratedVideo[0].video is None")
+        print(f"[VERTEX] GeneratedVideo fields: {first_video.model_fields_set}")
+        raise Exception(
+            "Response Vertex AI tidak mengandung objek video pada index 0.\n"
+            "Coba prompt yang berbeda atau periksa log di Google Cloud Console."
+        )
 
     # ── download ──
     try:
