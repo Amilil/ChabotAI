@@ -1,5 +1,3 @@
-import asyncio
-
 user_states = {}
 user_locks = {}
 user_timeout_tasks = {}
@@ -7,6 +5,7 @@ processed_messages = set()
 
 
 def get_msg_id(payload: dict) -> str:
+    """Extract message ID from payload or generate a fallback from sender, timestamp, and body."""
     msg_id = (
         payload.get("id")
         or payload.get("messageId")

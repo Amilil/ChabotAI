@@ -3,15 +3,14 @@ import uuid
 import httpx
 import asyncio
 
-from backend.google_drive_service import upload_file_to_drive
-
 
 def _write_file_sync(path: str, content: bytes):
     with open(path, "wb") as f:
         f.write(content)
 
 
-async def download_file(url: str, extension: str):
+async def download_file(url: str, extension: str) -> str:
+    """Download a file from a URL and save it locally with the given extension."""
     try:
         os.makedirs("generated", exist_ok=True)
     except OSError as e:
@@ -45,5 +44,3 @@ async def download_file(url: str, extension: str):
         raise Exception(f"Gagal simpan file ke disk: {e}")
 
 
-async def upload_to_drive(file_path: str, mime_type: str) -> str:
-    return await asyncio.to_thread(upload_file_to_drive, file_path, mime_type)

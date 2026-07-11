@@ -5,7 +5,7 @@ from backend.ai_services import check_rate_limit
 
 from backend.whatsapp_service import send_text
 from backend.messages import MSG_RATE_LIMITED
-from backend.services.session_service import user_states, user_locks, user_timeout_tasks, processed_messages, get_msg_id
+from backend.services.session_service import user_states, user_locks, processed_messages, get_msg_id
 from backend.services.timeout_service import reset_timeout
 from backend.handlers.prompt_handler import handle_global_commands, handle_new_user, handle_waiting_prompt
 from backend.handlers.menu_handler import handle_waiting_menu
@@ -90,12 +90,14 @@ async def handle_message(sender_number: str, incoming_msg: str):
 # =====================================
 
 @app.get("/")
-async def home():
+async def home() -> dict:
+    """Health check endpoint."""
     return {"status": "online", "bot": "AI Content Generator"}
 
 
 @app.post("/webhook")
-async def whatsapp_webhook(request: Request):
+async def whatsapp_webhook(request: Request) -> dict:
+    """Receive WhatsApp webhook, validate payload, and dispatch to message handler."""
 
     print("WEBHOOK HIT")
 
