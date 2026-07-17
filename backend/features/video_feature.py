@@ -25,6 +25,8 @@ async def handle_video_generation(sender_number: str, prompt: str, rasio: str, r
         drive_link = await asyncio.to_thread(upload_file_to_drive, video_result, "video/mp4")
     except Exception as e:
         print("DRIVE ERROR:", e)
+        import traceback
+        traceback.print_exc()
         await send_text(sender_number, MSG_ERROR_UPLOAD)
         user_states[sender_number] = {"step": "waiting_prompt"}
         return {"status": "drive_error"}

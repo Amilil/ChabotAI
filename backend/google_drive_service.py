@@ -9,6 +9,8 @@ from googleapiclient.http import MediaFileUpload
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
+import threading
+from backend.utils.file_naming import get_today_folder
 
 
 SCOPES = [
@@ -17,6 +19,9 @@ SCOPES = [
 
 #route folder id
 FOLDER_ID = "1SQD0yp8TNTePRNaEYSiDhFPUeP2w3T26"
+
+_cache = {}
+_lock = threading.RLock()
 
 
 def get_drive_service():
@@ -66,6 +71,70 @@ def get_drive_service():
 drive_service = get_drive_service()
 
 
+# ─── logging temporer untuk investigasi stale connection ───
+def _log_conn_pool(label="", detail=False):
+    try:
+        http_obj = drive_service._http.http
+        pool = http_obj.connections
+        conn = pool.get("https:www.googleapis.com")
+        print(f"[CONNPOOL][{label}] pool_size={len(pool)}")
+        if conn:
+            sock_status = "EXISTS" if conn.sock is not None else "None"
+            print(f"[CONNPOOL][{label}] googleapis conn found, sock={sock_status}")
+            if detail and conn.sock is not None:
+                try:
+                    import psutil
+                    fd = conn.sock.fileno()
+                    print(f"[CONNPOOL][{label}] sock.fileno()={fd}")
+                except Exception:
+                    print(f"[CONNPOOL][{label}] sock.fileno()=N/A")
+            print(f"[CONNPOOL][{label}] conn.__dict__ keys: {[k for k in conn.__dict__.keys() if not k.startswith('_')]}")
+        else:
+            print(f"[CONNPOOL][{label}] googleapis conn NOT in pool")
+    except Exception as ex:
+        print(f"[CONNPOOL][{label}] ERROR reading pool: {ex}")
+
+
+# ─── end logging temporer ───
+
+
+def _ensure_folder(logical_path: str) -> str:
+    parts = logical_path.split("/", 1)
+    folder_name = parts[-1]
+
+    with _lock:
+        cached = _cache.get(logical_path)
+        if cached:
+            return cached
+
+        if len(parts) == 1:
+            parent_id = FOLDER_ID
+        else:
+            parent_id = _ensure_folder(parts[0])
+
+        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '{parent_id}' in parents"
+        print(f"[GDRIVE-DEBUG] LIST {logical_path}")
+        result = drive_service.files().list(q=query, spaces="drive", fields="files(id)").execute()
+        files = result.get("files", [])
+
+        if files:
+            folder_id = files[0]["id"]
+            print(f"[GDRIVE-DEBUG] FOUND {logical_path} → {folder_id}")
+        else:
+            print(f"[GDRIVE-DEBUG] CREATE {logical_path}")
+            folder_metadata = {
+                "name": folder_name,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [parent_id]
+            }
+            created = drive_service.files().create(body=folder_metadata, fields="id").execute()
+            folder_id = created.get("id")
+            print(f"[GDRIVE-DEBUG] CREATED {logical_path} → {folder_id}")
+
+        _cache[logical_path] = folder_id
+        return folder_id
+
+
 def upload_file_to_drive(file_path, mime_type) -> str:
     """Upload a file to Google Drive and return a publicly shareable link."""
 
@@ -79,9 +148,20 @@ def upload_file_to_drive(file_path, mime_type) -> str:
 
     file_name = os.path.basename(file_path)
 
+    root_type = "Photo" if mime_type.startswith("image/") else "Video"
+    date_str = get_today_folder()
+    logical_path = f"{root_type}/{date_str}"
+
+    print(f"[GDRIVE] Folder   : {logical_path}")
+    print(f"[GDRIVE] Filename : {file_name}")
+
+    print(f"[GDRIVE-DEBUG] ENSURE {logical_path}")
+    folder_id = _ensure_folder(logical_path)
+    print(f"[GDRIVE-DEBUG] ENSURE_DONE {logical_path} → {folder_id}")
+
     file_metadata = {
         "name": file_name,
-        "parents": [FOLDER_ID]
+        "parents": [folder_id]
     }
 
     print("[DRIVE] Creating MediaFileUpload...")
@@ -90,22 +170,50 @@ def upload_file_to_drive(file_path, mime_type) -> str:
         mimetype=mime_type
     )
 
+    # ─── logging koneksi sebelum execute ───
+    _log_conn_pool("before_execute")
+    # ───
+
     print("[DRIVE] Calling files.create()...")
     try:
         uploaded_file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
             fields="id"
-        ).execute()
+        ).execute(num_retries=3)
+        # ─── logging koneksi setelah sukses ───
+        _log_conn_pool("after_success")
+        # ───
     except Exception as e:
-        print("[DRIVE][ERROR]")
-        print(f"STEP: files.create()")
-        print(f"TYPE: {type(e).__name__}")
-        print(f"MESSAGE: {e}")
-        print(f"REPR: {repr(e)}")
-        print(f"TRACEBACK:")
-        traceback.print_exc()
-        raise
+        status_code = None
+        if hasattr(e, 'resp') and hasattr(e.resp, 'status'):
+            status_code = e.resp.status
+
+        if status_code == 404 or "not found" in str(e).lower():
+            print("[GDRIVE][RECOVERY] Folder tidak ditemukan, recovery...")
+            with _lock:
+                _cache.pop(logical_path, None)
+                _cache.pop(root_type, None)
+            folder_id = _ensure_folder(logical_path)
+            file_metadata["parents"] = [folder_id]
+            media = MediaFileUpload(file_path, mimetype=mime_type)
+            uploaded_file = drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields="id"
+            ).execute(num_retries=3)
+        else:
+            print("[DRIVE][ERROR]")
+            print(f"STEP: files.create()")
+            print(f"TYPE: {type(e).__name__}")
+            print(f"MESSAGE: {e}")
+            print(f"REPR: {repr(e)}")
+            # ─── logging koneksi setelah gagal ───
+            _log_conn_pool("after_error", detail=True)
+            # ───
+            print(f"TRACEBACK:")
+            traceback.print_exc()
+            raise
 
     file_id = uploaded_file.get("id")
     print(f"[DRIVE] files.create() success")
@@ -136,4 +244,5 @@ def upload_file_to_drive(file_path, mime_type) -> str:
     public_url = f"https://drive.google.com/file/d/{file_id}/view"
 
     print("[DRIVE] Upload finished")
+    print(f"[GDRIVE] Upload   : Success")
     return public_url
