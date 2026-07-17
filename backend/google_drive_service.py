@@ -24,6 +24,12 @@ _cache = {}
 _lock = threading.RLock()
 
 
+def normalize_user_id(sender: str) -> str:
+    if not sender:
+        return "unknown"
+    return sender.split("@")[0]
+
+
 def get_drive_service():
     """Authenticate and return a Google Drive API service instance."""
 
@@ -99,7 +105,7 @@ def _log_conn_pool(label="", detail=False):
 
 
 def _ensure_folder(logical_path: str) -> str:
-    parts = logical_path.split("/", 1)
+    parts = logical_path.split("/")
     folder_name = parts[-1]
 
     with _lock:
@@ -110,7 +116,7 @@ def _ensure_folder(logical_path: str) -> str:
         if len(parts) == 1:
             parent_id = FOLDER_ID
         else:
-            parent_id = _ensure_folder(parts[0])
+            parent_id = _ensure_folder("/".join(parts[:-1]))
 
         query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '{parent_id}' in parents"
         print(f"[GDRIVE-DEBUG] LIST {logical_path}")
@@ -135,7 +141,7 @@ def _ensure_folder(logical_path: str) -> str:
         return folder_id
 
 
-def upload_file_to_drive(file_path, mime_type) -> str:
+def upload_file_to_drive(file_path, mime_type, sender_number: str = "unknown") -> str:
     """Upload a file to Google Drive and return a publicly shareable link."""
 
     import traceback
@@ -150,7 +156,8 @@ def upload_file_to_drive(file_path, mime_type) -> str:
 
     root_type = "Photo" if mime_type.startswith("image/") else "Video"
     date_str = get_today_folder()
-    logical_path = f"{root_type}/{date_str}"
+    user_id = normalize_user_id(sender_number)
+    logical_path = f"{user_id}/{date_str}/{root_type}"
 
     print(f"[GDRIVE] Folder   : {logical_path}")
     print(f"[GDRIVE] Filename : {file_name}")
