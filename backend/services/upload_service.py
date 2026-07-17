@@ -3,6 +3,8 @@ import uuid
 import httpx
 import asyncio
 
+from backend.utils.file_naming import generate_local_filename
+
 
 def _write_file_sync(path: str, content: bytes):
     with open(path, "wb") as f:
@@ -17,7 +19,7 @@ async def download_file(url: str, extension: str) -> str:
         print(f"[DOWNLOAD] Gagal buat folder 'generated': {e}")
         raise Exception(f"Gagal buat folder penyimpanan: {e}")
 
-    filename = f"generated/{uuid.uuid4()}.{extension}"
+    filename = generate_local_filename(extension)
 
     try:
         async with httpx.AsyncClient(timeout=300) as client:

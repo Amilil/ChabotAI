@@ -11,6 +11,7 @@ import backend.config as config
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, APIStatusError, AuthenticationError, RateLimitError
 
 from backend.services.upload_service import download_file
+from backend.utils.file_naming import generate_local_filename
 
 
 TIMEOUT = httpx.Timeout(
@@ -431,7 +432,7 @@ async def _generate_image_gemini(prompt: str, rasio: str = "1:1") -> str:
         print(f"[IMAGE/GEMINI] Gagal buat folder: {e}")
         raise Exception(f"Gagal buat folder penyimpanan: {e}")
 
-    filename = f"generated/{uuid.uuid4()}.png"
+    filename = generate_local_filename("png")
     try:
         with open(filename, "wb") as f:
             f.write(image_bytes)
@@ -609,7 +610,7 @@ async def _generate_image_cloudflare(prompt: str, rasio: str = "1:1") -> str:
         print(f"[IMAGE/CLOUDFLARE] Gagal buat folder: {e}")
         raise Exception(f"Gagal buat folder penyimpanan: {e}")
 
-    filename = f"generated/{uuid.uuid4()}.png"
+    filename = generate_local_filename("png")
     try:
         with open(filename, "wb") as f:
             f.write(image_bytes)
@@ -725,7 +726,7 @@ async def generate_image(prompt: str, rasio: str = "1:1", resolusi: str = "720p"
     if b64:
         try:
             os.makedirs("generated", exist_ok=True)
-            filename = f"generated/{uuid.uuid4()}.png"
+            filename = generate_local_filename("png")
             with open(filename, "wb") as f:
                 f.write(base64.b64decode(b64))
             print(f"[IMAGE] Berhasil decode b64 ke: {filename}")

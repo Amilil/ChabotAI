@@ -5,6 +5,8 @@ import asyncio
 
 import backend.config as config
 
+from backend.utils.file_naming import generate_local_filename
+
 
 POLL_INTERVAL = 20
 POLL_TIMEOUT = 600
@@ -401,7 +403,7 @@ async def generate_video_vertex(prompt: str, rasio: str = "1:1", resolusi: str =
     except OSError as e:
         raise Exception(f"Gagal buat folder penyimpanan 'generated': {e}")
 
-    local_filename = f"generated/{uuid.uuid4()}.mp4"
+    local_filename = generate_local_filename("mp4")
 
     download_start = time.time()
     try:
