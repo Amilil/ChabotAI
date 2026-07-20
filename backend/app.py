@@ -14,7 +14,6 @@ from backend.handlers.resolution_handler import handle_waiting_resolusi
 from backend.handlers.confirm_handler import handle_waiting_konfirmasi
 from backend.features.image_feature import handle_image_generation
 from backend.features.video_feature import handle_video_generation
-from backend.features.caption_feature import handle_caption_generation
 from backend.features.image_caption_feature import handle_image_caption_generation
 from backend.features.video_caption_feature import handle_video_caption_generation
 from backend.features.revision_feature import handle_caption_revision

@@ -1,6 +1,5 @@
 import asyncio
 import httpx
-import uuid
 import os
 import base64
 import random

@@ -77,32 +77,6 @@ def get_drive_service():
 drive_service = get_drive_service()
 
 
-# ─── logging temporer untuk investigasi stale connection ───
-def _log_conn_pool(label="", detail=False):
-    try:
-        http_obj = drive_service._http.http
-        pool = http_obj.connections
-        conn = pool.get("https:www.googleapis.com")
-        print(f"[CONNPOOL][{label}] pool_size={len(pool)}")
-        if conn:
-            sock_status = "EXISTS" if conn.sock is not None else "None"
-            print(f"[CONNPOOL][{label}] googleapis conn found, sock={sock_status}")
-            if detail and conn.sock is not None:
-                try:
-                    import psutil
-                    fd = conn.sock.fileno()
-                    print(f"[CONNPOOL][{label}] sock.fileno()={fd}")
-                except Exception:
-                    print(f"[CONNPOOL][{label}] sock.fileno()=N/A")
-            print(f"[CONNPOOL][{label}] conn.__dict__ keys: {[k for k in conn.__dict__.keys() if not k.startswith('_')]}")
-        else:
-            print(f"[CONNPOOL][{label}] googleapis conn NOT in pool")
-    except Exception as ex:
-        print(f"[CONNPOOL][{label}] ERROR reading pool: {ex}")
-
-
-# ─── end logging temporer ───
-
 
 def _ensure_folder(logical_path: str) -> str:
     parts = logical_path.split("/")
@@ -177,10 +151,6 @@ def upload_file_to_drive(file_path, mime_type, sender_number: str = "unknown") -
         mimetype=mime_type
     )
 
-    # ─── logging koneksi sebelum execute ───
-    _log_conn_pool("before_execute")
-    # ───
-
     print("[DRIVE] Calling files.create()...")
     try:
         uploaded_file = drive_service.files().create(
@@ -188,9 +158,6 @@ def upload_file_to_drive(file_path, mime_type, sender_number: str = "unknown") -
             media_body=media,
             fields="id"
         ).execute(num_retries=3)
-        # ─── logging koneksi setelah sukses ───
-        _log_conn_pool("after_success")
-        # ───
     except Exception as e:
         status_code = None
         if hasattr(e, 'resp') and hasattr(e.resp, 'status'):
@@ -215,9 +182,6 @@ def upload_file_to_drive(file_path, mime_type, sender_number: str = "unknown") -
             print(f"TYPE: {type(e).__name__}")
             print(f"MESSAGE: {e}")
             print(f"REPR: {repr(e)}")
-            # ─── logging koneksi setelah gagal ───
-            _log_conn_pool("after_error", detail=True)
-            # ───
             print(f"TRACEBACK:")
             traceback.print_exc()
             raise

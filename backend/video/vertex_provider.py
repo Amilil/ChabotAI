@@ -1,6 +1,5 @@
 import os
 import time
-import uuid
 import asyncio
 
 import backend.config as config
