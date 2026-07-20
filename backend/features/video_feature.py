@@ -22,7 +22,8 @@ async def handle_video_generation(sender_number: str, prompt: str, rasio: str, r
         return {"status": "feature_wip"}
 
     try:
-        drive_link = await asyncio.to_thread(upload_file_to_drive, video_result, "video/mp4", sender_number)
+        drive_number = user_states[sender_number].get("drive_user_number", sender_number)
+        drive_link = await asyncio.to_thread(upload_file_to_drive, video_result, "video/mp4", drive_number)
     except Exception as e:
         print("DRIVE ERROR:", e)
         import traceback

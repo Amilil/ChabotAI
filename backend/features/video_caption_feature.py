@@ -24,7 +24,8 @@ async def handle_video_caption_generation(sender_number: str, prompt: str, rasio
     print("[VIDEO] Generate success")
 
     try:
-        drive_link = await asyncio.to_thread(upload_file_to_drive, result["video"], "video/mp4", sender_number)
+        drive_number = user_states[sender_number].get("drive_user_number", sender_number)
+        drive_link = await asyncio.to_thread(upload_file_to_drive, result["video"], "video/mp4", drive_number)
     except Exception as e:
         print("DRIVE ERROR:", e)
         import traceback

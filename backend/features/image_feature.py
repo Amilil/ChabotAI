@@ -22,7 +22,8 @@ async def handle_image_generation(sender_number: str, prompt: str, rasio: str, r
         return {"status": "feature_wip"}
 
     try:
-        drive_link = await asyncio.to_thread(upload_file_to_drive, image_result, "image/png", sender_number)
+        drive_number = user_states[sender_number].get("drive_user_number", sender_number)
+        drive_link = await asyncio.to_thread(upload_file_to_drive, image_result, "image/png", drive_number)
     except Exception as e:
         print("DRIVE ERROR:", e)
         await send_text(sender_number, MSG_ERROR_UPLOAD)
