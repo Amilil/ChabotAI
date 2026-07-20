@@ -61,3 +61,70 @@ async def send_text(to, text) -> dict | None:
     except Exception as e:
         print("[SEND TEXT ERROR]", e)
         return None
+
+
+# ==========================================
+# LID → Phone Number resolution
+# ==========================================
+
+async def resolve_lid(sender: str) -> str:
+    """Resolve @lid to real phone number via WAHA API.
+
+    Returns the real MSISDN (e.g. 62813xx@c.us) if sender is @lid,
+    otherwise returns sender unchanged.
+
+    Cache hit → immediate return.
+    HTTP 500   → warm-up + retry once.
+    All failures → fallback to original sender.
+    """
+    if "@lid" not in sender:
+        return sender
+
+    from backend.services.lid_cache import get_cached_phone, set_cached_phone
+
+    cached = get_cached_phone(sender)
+    if cached:
+        print(f"[LID] Cache hit: {sender} → {cached}")
+        return cached
+
+    lid = sender.replace("@lid", "")
+    url = f"{config.WAHA_URL}/api/{config.WAHA_SESSION}/lids/{lid}"
+
+    print(f"[LID] Resolving: {sender}")
+
+    async def _do_request() -> httpx.Response | None:
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                return await c.get(url, headers={"X-Api-Key": config.WAHA_API_KEY})
+        except Exception as e:
+            print(f"[LID] Request error: {e}")
+            return None
+
+    resp = await _do_request()
+
+    # ── HTTP 500: warm-up + retry sekali ──
+    if resp and resp.status_code == 500:
+        print("[LID] HTTP 500 — warmup + retry")
+        try:
+            warmup_url = f"{config.WAHA_URL}/api/{config.WAHA_SESSION}/lids?limit=1"
+            async with httpx.AsyncClient(timeout=10) as c:
+                await c.get(warmup_url, headers={"X-Api-Key": config.WAHA_API_KEY})
+        except Exception:
+            pass
+        resp = await _do_request()
+
+    # ── Parse sukses ──
+    if resp and resp.status_code == 200:
+        try:
+            body = resp.json()
+            pn = body.get("pn")
+            if pn:
+                set_cached_phone(sender, pn)
+                print(f"[LID] Resolved: {sender} → {pn}")
+                return pn
+        except Exception as e:
+            print(f"[LID] Parse response gagal: {e}")
+
+    # ── Fallback ──
+    print(f"[LID] Fallback: gunakan sender asli ({sender})")
+    return sender

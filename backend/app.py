@@ -3,7 +3,7 @@ import asyncio
 import time
 from backend.ai_services import check_rate_limit
 
-from backend.whatsapp_service import send_text
+from backend.whatsapp_service import send_text, resolve_lid
 from backend.messages import MSG_RATE_LIMITED
 from backend.services.session_service import user_states, user_locks, processed_messages, get_msg_id
 from backend.services.timeout_service import reset_timeout
@@ -31,8 +31,14 @@ async def handle_message(sender_number: str, incoming_msg: str):
     if result:
         return result
 
+    drive_user_number = await resolve_lid(sender_number)
+
     if sender_number not in user_states:
-        return await handle_new_user(sender_number)
+        result = await handle_new_user(sender_number)
+        user_states[sender_number]["drive_user_number"] = drive_user_number
+        return result
+
+    user_states[sender_number]["drive_user_number"] = drive_user_number
 
     reset_timeout(sender_number)
 
