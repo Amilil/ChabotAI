@@ -2,7 +2,6 @@ import asyncio
 import httpx
 import os
 import base64
-import random
 import time
 
 import backend.config as config
@@ -11,6 +10,8 @@ from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, APIStatusEr
 
 from backend.services.upload_service import download_file
 from backend.utils.file_naming import generate_local_filename
+from backend.constants import RASIO_MAP, RESOLUSI_BASE, RESOLUSI_MAX, RESOLUSI_ALLOWED, IMAGE_SIZE_MAP, get_size, get_image_size
+from backend.services.retry import _retry_with_backoff, BudgetExceededError, _raise_if_budget_exceeded
 
 
 TIMEOUT = httpx.Timeout(
@@ -34,93 +35,6 @@ print(f"[CONFIG] OPENAI_BASE   : {OPENAI_BASE_URL}")
 print(f"[CONFIG] RAW_BASE      : {RAW_BASE_URL}")
 
 
-# ==========================================
-# RATE LIMITER (in-memory token bucket)
-# ==========================================
-
-class TokenBucket:
-    def __init__(self, rate: float, capacity: int):
-        self.rate = rate
-        self.capacity = capacity
-        self.tokens = capacity
-        self.last_refill = time.monotonic()
-
-    def consume(self, tokens: int = 1) -> bool:
-        now = time.monotonic()
-        elapsed = now - self.last_refill
-        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
-        self.last_refill = now
-        if self.tokens >= tokens:
-            self.tokens -= tokens
-            return True
-        return False
-
-
-_user_buckets = {}
-
-def check_rate_limit(user_id: str, max_requests: int = 3, window: int = 10) -> bool:
-    """Check if user is within rate limit using a token bucket algorithm."""
-    if user_id not in _user_buckets:
-        _user_buckets[user_id] = TokenBucket(max_requests / window, max_requests)
-    return _user_buckets[user_id].consume()
-
-
-# ==========================================
-# RETRY WITH EXPONENTIAL BACKOFF
-# ==========================================
-
-async def _retry_with_backoff(coro_factory, max_retries=3, base_delay=2, label="AI"):
-    """Retry an async coroutine factory with exponential backoff, skipping non-retryable errors."""
-    for attempt in range(1, max_retries + 1):
-        try:
-            return await coro_factory()
-        except (AuthenticationError, BudgetExceededError) as e:
-            raise
-        except Exception as e:
-            code = None
-            if hasattr(e, 'status_code'):
-                code = e.status_code
-            elif hasattr(e, 'code'):
-                code = e.code
-
-            if code in (400, 401, 403, 404):
-                raise
-
-            if attempt == max_retries:
-                raise
-
-            delay = base_delay * (2 ** (attempt - 1)) * random.uniform(0.75, 1.25)
-            print(f"[RETRY/{label}] Attempt {attempt}/{max_retries}" +
-                  (f" HTTP {code}" if code else "") +
-                  f": {type(e).__name__}. Retry in {delay:.1f}s...")
-            await asyncio.sleep(delay)
-
-
-# ==========================================
-# BUDGET GUARD
-# ==========================================
-
-class BudgetExceededError(Exception):
-    """Raised saat API key melebihi budget harian — hentikan semua retry."""
-    pass
-
-
-def _raise_if_budget_exceeded(response: httpx.Response):
-    """Cek apakah 429 disebabkan budget habis. Kalau iya, raise BudgetExceededError."""
-    if response.status_code != 429:
-        return
-    try:
-        body = response.json()
-        msg = body.get("error", {}).get("message", "")
-    except Exception:
-        msg = response.text
-
-    if "budget" in msg.lower() or "exceededbudget" in msg.lower():
-        print(f"[BUDGET] Budget harian habis: {msg}")
-        raise BudgetExceededError(
-            "⚠️ Budget API harian telah habis. Silakan hubungi admin untuk menaikkan limit."
-        )
-
 # Client untuk text (OpenAI SDK) — LiteLLM
 client_text = AsyncOpenAI(
     api_key=config.LOCAL_API_KEY,
@@ -134,74 +48,6 @@ client_groq = AsyncOpenAI(
     base_url="https://api.groq.com/openai/v1",
     timeout=TIMEOUT
 )
-
-# ==========================================
-# MAPPING RASIO + RESOLUSI → SIZE
-# ==========================================
-
-RESOLUSI_BASE = {
-    "480p": 480,
-    "720p": 720,
-}
-
-# Resolusi maksimal yang diizinkan
-RESOLUSI_MAX = "720p"
-RESOLUSI_ALLOWED = {"480p", "720p"}
-
-RASIO_MAP = {
-    "1:1":  (1, 1),
-    "9:16": (9, 16),
-    "16:9": (16, 9),
-    "3:4":  (3, 4),
-    "4:3":  (4, 3),
-    "4:5":  (4, 5),
-    "5:4":  (5, 4),
-    "3:2":  (3, 2),
-    "2:3":  (2, 3),
-    "21:9": (21, 9),
-}
-
-def get_size(rasio: str = "1:1", resolusi: str = "720p") -> str:
-    """Calculate pixel dimensions from aspect ratio and resolution."""
-    # Clamp resolusi ke maksimal 720p
-    if resolusi not in RESOLUSI_ALLOWED:
-        resolusi = RESOLUSI_MAX
-    base = RESOLUSI_BASE.get(resolusi, 720)
-    w_ratio, h_ratio = RASIO_MAP.get(rasio, (1, 1))
-
-    if w_ratio >= h_ratio:
-        width  = base
-        height = round(base * h_ratio / w_ratio)
-    else:
-        height = base
-        width  = round(base * w_ratio / h_ratio)
-
-    width  = (width  // 8) * 8
-    height = (height // 8) * 8
-
-    return f"{width}x{height}"
-
-
-# ==========================================
-# IMAGE SIZE — ukuran standar yang didukung model
-# ==========================================
-
-IMAGE_SIZE_MAP = {
-    "1:1":  "1024x1024",
-    "9:16": "768x1344",
-    "16:9": "1344x768",
-    "3:4":  "768x1024",
-    "4:3":  "1024x768",
-    "4:5":  "768x960",
-    "5:4":  "960x768",
-    "3:2":  "1152x768",
-    "2:3":  "768x1152",
-    "21:9": "1536x640",
-}
-
-def get_image_size(rasio: str) -> str:
-    return IMAGE_SIZE_MAP.get(rasio, "1024x1024")
-
 
 # ==========================================
 # TEXT

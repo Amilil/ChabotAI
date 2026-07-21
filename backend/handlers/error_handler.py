@@ -2,7 +2,7 @@ from backend.services.session_service import user_states
 from backend.services.timeout_service import cancel_timeout, reset_timeout
 from backend.whatsapp_service import send_text
 from backend.messages import MSG_ERROR_BUDGET, MSG_ERROR_CONTENT_FILTER, MSG_ERROR_GENERAL
-from backend.ai_services import BudgetExceededError
+from backend.services.retry import BudgetExceededError
 
 
 async def handle_ai_error(sender_number: str, e: Exception) -> dict:

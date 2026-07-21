@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 import asyncio
 import time
-from backend.ai_services import check_rate_limit
+from backend.services.rate_limiter import check_rate_limit
 
 from backend.whatsapp_service import send_text, resolve_lid
 from backend.messages import MSG_RATE_LIMITED
