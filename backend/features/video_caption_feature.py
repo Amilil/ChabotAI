@@ -1,11 +1,10 @@
-import asyncio
 import backend.ai_services as ai_services
-from backend.google_drive_service import upload_file_to_drive
 from backend.whatsapp_service import send_text
 from backend.services.session_service import user_states
 from backend.services.timeout_service import reset_timeout
+from backend.services.drive_helper import upload_to_drive
 from backend.handlers.error_handler import handle_ai_error
-from backend.messages import MSG_FEATURE_WIP, MSG_ERROR_UPLOAD
+from backend.messages import MSG_FEATURE_WIP
 
 
 async def handle_video_caption_generation(sender_number: str, prompt: str, rasio: str, resolusi: str) -> dict:
@@ -23,15 +22,8 @@ async def handle_video_caption_generation(sender_number: str, prompt: str, rasio
 
     print("[VIDEO] Generate success")
 
-    try:
-        drive_number = user_states[sender_number].get("drive_user_number", sender_number)
-        drive_link = await asyncio.to_thread(upload_file_to_drive, result["video"], "video/mp4", drive_number)
-    except Exception as e:
-        print("DRIVE ERROR:", e)
-        import traceback
-        traceback.print_exc()
-        await send_text(sender_number, MSG_ERROR_UPLOAD)
-        user_states[sender_number] = {"step": "waiting_prompt"}
+    drive_link = await upload_to_drive(sender_number, result["video"], "video/mp4")
+    if drive_link is None:
         return {"status": "drive_error"}
 
     print("[VIDEO] Upload Drive success")

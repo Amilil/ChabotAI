@@ -11,14 +11,14 @@ from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 import threading
 from backend.utils.file_naming import get_today_folder
+import backend.config as config
 
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-#route folder id
-FOLDER_ID = "1SQD0yp8TNTePRNaEYSiDhFPUeP2w3T26"
+FOLDER_ID = config.DRIVE_ROOT_FOLDER_ID
 
 _cache = {}
 _lock = threading.RLock()

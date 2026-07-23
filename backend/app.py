@@ -109,10 +109,6 @@ async def whatsapp_webhook(request: Request) -> dict:
     try:
         data = await request.json()
 
-        print("\n=========== WEBHOOK MASUK ===========")
-        print(data)
-        print("=====================================\n")
-
         payload = data.get("payload", {})
 
         # --- Anti duplikat ---
