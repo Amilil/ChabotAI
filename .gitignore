@@ -16,3 +16,6 @@ node_modules/
 
 static/*.jpg
 static/*.png
+
+backup/
+qr-code.png
