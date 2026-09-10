@@ -5,7 +5,7 @@ from backend.services.rate_limiter import check_rate_limit
 
 from backend.whatsapp_service import send_text, resolve_lid
 from backend.messages import MSG_RATE_LIMITED
-from backend.services.session_service import user_states, user_locks, processed_messages, get_msg_id
+from backend.services.session_service import user_states, user_locks, add_processed, get_msg_id
 from backend.services.timeout_service import reset_timeout
 from backend.handlers.prompt_handler import handle_global_commands, handle_new_user, handle_waiting_prompt
 from backend.handlers.menu_handler import handle_waiting_menu
@@ -118,13 +118,9 @@ async def whatsapp_webhook(request: Request) -> dict:
         if not msg_id:
             return {"status": "ignored", "reason": "no_msg_id"}
 
-        if msg_id in processed_messages:
+        if not add_processed(msg_id):
             print("DUPLICATE DETECTED:", msg_id)
             return {"status": "duplicate"}
-
-        processed_messages.add(msg_id)
-        if len(processed_messages) > 1000:
-            processed_messages.clear()
 
         # --- Filter event ---
         event = data.get("event")
@@ -181,3 +177,18 @@ async def whatsapp_webhook(request: Request) -> dict:
             "status": "error",
             "message": str(e)
         }
+
+
+@app.post("/webhook-test")
+async def webhook_test(request: Request):
+    """Minimal webhook endpoint for testing - only prints payload to terminal."""
+    data = await request.json()
+    payload = data.get("payload", {})
+    sender = payload.get("from", "unknown")
+    text = (payload.get("body") or payload.get("text") or "").strip()
+    print(f"\n=== WEBHOOK TEST RECEIVED ===")
+    print(f"FROM: {sender}")
+    print(f"TEXT: {text}")
+    print(f"FULL PAYLOAD: {data}")
+    print(f"=============================\n")
+    return {"status": "received"}

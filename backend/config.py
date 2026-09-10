@@ -3,6 +3,9 @@ import os
 
 load_dotenv()
 
+HOST = os.getenv("HOST", "0.0.0.0")
+PORT = int(os.getenv("PORT", "8000"))
+
 LOCAL_API_KEY = os.getenv("LOCAL_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 

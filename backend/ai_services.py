@@ -309,9 +309,6 @@ async def _generate_image_cloudflare(prompt: str, rasio: str = "1:1") -> str:
     endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
 
     size_str = get_image_size(rasio)
-    parts = size_str.split("x")
-    width = int(parts[0]) if len(parts) == 2 else 1024
-    height = int(parts[1]) if len(parts) == 2 else 1024
 
     print("\n========== IMAGE (Cloudflare) ==========")
     print("PROVIDER  : Cloudflare")
@@ -330,10 +327,11 @@ async def _generate_image_cloudflare(prompt: str, rasio: str = "1:1") -> str:
                     "Authorization": f"Bearer {config.CLOUDFLARE_API_TOKEN}",
                     "Content-Type": "application/json"
                 },
+                # NOTE: flux-1-schnell tidak mendukung width/height (per Cloudflare docs, Sep 2026).
+                # Rasio non-1:1 tidak bisa dikontrol lewat model ini.
                 json={
                     "prompt": prompt,
-                    "width": width,
-                    "height": height,
+                    "steps": 4,
                 }
             )
 

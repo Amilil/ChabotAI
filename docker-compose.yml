@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  waha:
+    image: devlikeapro/waha:latest-2026.8.2
+    container_name: waha-local
+    ports:
+      - "3001:3000"
+    environment:
+      - WAHA_API_KEY=123123123
+    volumes:
+      - waha-sessions:/app/.sessions
+    restart: unless-stopped
+
+volumes:
+  waha-sessions:

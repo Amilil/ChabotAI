@@ -1,7 +1,25 @@
+from collections import deque
+
 user_states = {}
 user_locks = {}
 user_timeout_tasks = {}
-processed_messages = set()
+
+processed_queue: deque[str] = deque(maxlen=1000)
+processed_set: set[str] = set()
+
+
+def add_processed(msg_id: str) -> bool:
+    if msg_id in processed_set:
+        return False
+
+    if len(processed_queue) == processed_queue.maxlen:
+        oldest = processed_queue.popleft()
+        processed_set.discard(oldest)
+
+    processed_queue.append(msg_id)
+    processed_set.add(msg_id)
+
+    return True
 
 
 def get_msg_id(payload: dict) -> str:

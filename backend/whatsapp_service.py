@@ -35,11 +35,15 @@ async def send_text(to, text) -> dict | None:
         "text": text
     }
 
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if config.WAHA_API_KEY:
+        headers["X-Api-Key"] = config.WAHA_API_KEY
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 f"{config.WAHA_URL}/api/sendText",
-                headers={"X-Api-Key": config.WAHA_API_KEY},
+                headers=headers,
                 json=payload
             )
 
@@ -92,10 +96,14 @@ async def resolve_lid(sender: str) -> str:
 
     print(f"[LID] Resolving: {sender}")
 
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if config.WAHA_API_KEY:
+        headers["X-Api-Key"] = config.WAHA_API_KEY
+
     async def _do_request() -> httpx.Response | None:
         try:
             async with httpx.AsyncClient(timeout=15) as c:
-                return await c.get(url, headers={"X-Api-Key": config.WAHA_API_KEY})
+                return await c.get(url, headers=headers)
         except Exception as e:
             print(f"[LID] Request error: {e}")
             return None
@@ -108,7 +116,7 @@ async def resolve_lid(sender: str) -> str:
         try:
             warmup_url = f"{config.WAHA_URL}/api/{config.WAHA_SESSION}/lids?limit=1"
             async with httpx.AsyncClient(timeout=10) as c:
-                await c.get(warmup_url, headers={"X-Api-Key": config.WAHA_API_KEY})
+                await c.get(warmup_url, headers=headers)
         except Exception:
             pass
         resp = await _do_request()
