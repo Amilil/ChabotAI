@@ -63,7 +63,7 @@ async def send_text(to, text) -> dict | None:
             return {"raw": res.text}
 
     except Exception as e:
-        print("[SEND TEXT ERROR]", e)
+        print("[SEND TEXT ERROR]", type(e).__name__, repr(e))
         return None
 
 

@@ -17,6 +17,7 @@ from backend.features.video_feature import handle_video_generation
 from backend.features.image_caption_feature import handle_image_caption_generation
 from backend.features.video_caption_feature import handle_video_caption_generation
 from backend.features.revision_feature import handle_caption_revision
+from backend.handlers.error_handler import handle_ai_error
 
 app = FastAPI()
 
@@ -167,7 +168,19 @@ async def whatsapp_webhook(request: Request) -> dict:
             return {"status": "ignored", "reason": "user_locked"}
 
         async with user_locks[sender_number]:
-            return await handle_message(sender_number, incoming_msg)
+            try:
+                return await asyncio.wait_for(
+                    handle_message(sender_number, incoming_msg),
+                    timeout=900  # 15 menit — cukup untuk video generation
+                                 # terpanjang (~12-15 menit), tapi tetap
+                                 # mencegah hang selamanya
+                )
+            except asyncio.TimeoutError:
+                print(f"[TIMEOUT] Proses untuk user {sender_number} melebihi batas waktu")
+                # Reset state + kirim pesan error generik, konsisten dengan
+                # jalur error lain (lihat handle_ai_error di error_handler.py)
+                await handle_ai_error(sender_number, asyncio.TimeoutError("Batas waktu pemrosesan terlampaui"))
+                return {"status": "timeout", "reason": "processing_exceeded_limit"}
 
     except Exception as e:
         print(f"\nWEBHOOK ERROR: {e}")
