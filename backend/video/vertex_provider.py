@@ -206,6 +206,7 @@ async def generate_video_vertex(prompt: str, rasio: str = "1:1", resolusi: str =
     except Exception as e:
         elapsed = time.time() - start_time
         print(f"[VERTEX] Response Time: {elapsed:.2f}s")
+        print(f"[VERTEX] RAW ERROR: {repr(e)}")
         err_str = str(e).lower()
 
         if "not found" in err_str or "404" in err_str:
