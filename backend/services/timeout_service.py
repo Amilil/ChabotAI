@@ -3,7 +3,7 @@ import asyncio
 from backend.constants import SESSION_TIMEOUT
 from backend.messages import MSG_SESSION_TIMEOUT
 from backend.whatsapp_service import send_text
-from backend.services.session_service import user_states, user_timeout_tasks
+from backend.services.session_service import user_states, user_locks, user_timeout_tasks
 
 
 def cancel_timeout(sender_number: str) -> None:
@@ -25,6 +25,7 @@ async def _timeout_worker(sender_number: str) -> None:
         print(f"[TIMEOUT] Reset sesi user {sender_number} karena idle {SESSION_TIMEOUT}s")
         user_states.pop(sender_number, None)
         user_timeout_tasks.pop(sender_number, None)
+        user_locks.pop(sender_number, None)
         await send_text(sender_number, MSG_SESSION_TIMEOUT)
 
 
