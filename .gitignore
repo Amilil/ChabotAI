@@ -19,3 +19,13 @@ static/*.png
 
 backup/
 qr-code.png
+
+# Test HF video (berisi token sementara, jangan di-commit)
+test_hf_video.py
+test_output.mp4
+
+# Test video poll (file testing lokal)
+test_video_poll.py
+
+fastapi_stdout.log
+fastapi_stderr.log
