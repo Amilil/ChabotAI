@@ -24,12 +24,23 @@ async def handle_image_caption_generation(sender_number: str, prompt: str, rasio
     if drive_link is None:
         return {"status": "drive_error"}
 
-    user_states[sender_number] = {
-        "step": "waiting_caption_revision",
-        "original_prompt": prompt,
-        "last_caption": result["caption"]
-    }
-    reset_timeout(sender_number)
     await send_text(sender_number, f"✅ Gambar selesai! ({rasio} / {resolusi})\n{drive_link}")
-    await send_text(sender_number, MSG_CAPTION_REVISION.format(caption=result["caption"]))
+
+    if result.get("caption"):
+        user_states[sender_number] = {
+            "step": "waiting_caption_revision",
+            "original_prompt": prompt,
+            "last_caption": result["caption"]
+        }
+        reset_timeout(sender_number)
+        await send_text(sender_number, MSG_CAPTION_REVISION.format(caption=result["caption"]))
+    else:
+        user_states[sender_number] = {"step": "waiting_prompt"}
+        reset_timeout(sender_number)
+        await send_text(
+            sender_number,
+            "⚠️ Gambar berhasil dibuat, tapi caption gagal dibuat.\n"
+            "Silakan pilih menu Caption jika ingin membuat caption secara terpisah."
+        )
+
     return {"status": "image_caption_done"}

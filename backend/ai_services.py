@@ -35,6 +35,26 @@ print(f"[CONFIG] OPENAI_BASE   : {OPENAI_BASE_URL}")
 print(f"[CONFIG] RAW_BASE      : {RAW_BASE_URL}")
 
 
+def is_ai_refusal(text: str) -> bool:
+    """Deteksi apakah teks adalah penolakan AI, bukan konten valid."""
+    normalized = text.strip().lower()
+    # Normalize smart quotes (curly) ke straight quotes, supaya pattern
+    # matching tidak gagal karena beda karakter kutip
+    normalized = normalized.replace("\u2019", "'").replace("\u2018", "'")
+    normalized = normalized.replace("\u201c", '"').replace("\u201d", '"')
+
+    if len(normalized) > 150:  # caption asli biasanya lebih panjang
+        return False
+    refusal_patterns = [
+        "i'm sorry", "i am sorry", "i cannot", "i can't", "i can not",
+        "i'm unable", "i am unable", "cannot help", "can't help",
+        "cannot assist", "i'm not able", "not able to help",
+        "maaf", "mohon maaf", "saya tidak bisa", "saya tidak dapat",
+        "tidak dapat membantu", "tidak bisa membantu"
+    ]
+    return any(normalized.startswith(p) for p in refusal_patterns)
+
+
 # Client untuk text (OpenAI SDK) — LiteLLM
 client_text = AsyncOpenAI(
     api_key=config.LOCAL_API_KEY,
@@ -157,6 +177,20 @@ async def generate_text(prompt: str) -> str:
         if not result:
             print(f"[TEXT/{pname}] Teks kosong")
             last_error = Exception("AI mengembalikan teks kosong")
+            continue
+
+        # --- Deteksi penolakan AI: jangan kirim teks penolakan ke user ---
+        # Prioritas 1: field resmi dari API (lebih reliable dari string matching)
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if finish_reason == "content_filter":
+            print(f"[TEXT/{pname}] Diblokir content filter (finish_reason: {finish_reason})")
+            last_error = Exception("Respons AI di-block oleh content filter")
+            continue
+
+        # Prioritas 2: pola teks penolakan sebagai cadangan
+        if is_ai_refusal(result):
+            print(f"[TEXT/{pname}] Deteksi penolakan AI: {result[:120]}")
+            last_error = Exception("Respons AI di-block oleh content filter")
             continue
 
         print(f"\n========== SUCCESS ({pname}) ==========")
@@ -762,13 +796,20 @@ async def generate_image_with_caption(prompt: str, rasio: str = "1:1", resolusi:
     if not image:
         return None
 
-    caption = await generate_text(
-        f"Create a professional, engaging social media caption (max 3 sentences) in Indonesian language for: {prompt}"
-    )
+    print("[CAPTION] Start")
+    try:
+        caption = await generate_text(
+            f"Create a professional, engaging social media caption (max 3 sentences) in Indonesian language for: {prompt}"
+        )
+        print("[CAPTION] Success")
+    except Exception as e:
+        print(f"[CAPTION] Failed: {e}")
+        caption = None
 
     return {
         "image": image,
-        "caption": caption
+        "caption": caption,
+        "caption_blocked": caption is None
     }
 
 
@@ -794,5 +835,6 @@ async def generate_video_with_caption(prompt: str, rasio: str = "1:1", resolusi:
 
     return {
         "video": video,
-        "caption": caption
+        "caption": caption,
+        "caption_blocked": caption is None
     }
