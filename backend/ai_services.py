@@ -36,23 +36,45 @@ print(f"[CONFIG] RAW_BASE      : {RAW_BASE_URL}")
 
 
 def is_ai_refusal(text: str) -> bool:
-    """Deteksi apakah teks adalah penolakan AI, bukan konten valid."""
+    """Deteksi apakah teks adalah penolakan AI, bukan konten valid.
+
+    Pola dibuat SPESIFIK (frasa lengkap, bukan kata pembuka saja) untuk
+    menghindari false positive pada caption sah yang kebetulan mengandung
+    kata seperti 'maaf' di awal kalimat (contoh: caption permintaan maaf
+    keterlambatan pengiriman).
+    """
     normalized = text.strip().lower()
-    # Normalize smart quotes (curly) ke straight quotes, supaya pattern
-    # matching tidak gagal karena beda karakter kutip
     normalized = normalized.replace("\u2019", "'").replace("\u2018", "'")
     normalized = normalized.replace("\u201c", '"').replace("\u201d", '"')
 
-    if len(normalized) > 150:  # caption asli biasanya lebih panjang
+    if len(normalized) > 150:
         return False
+
+    # Frasa SPESIFIK & LENGKAP yang hanya muncul pada penolakan AI,
+    # bukan kata pembuka pendek yang ambigu ("maaf", "i'm sorry" saja
+    # DIHAPUS dari daftar karena terlalu sering muncul di caption sah)
     refusal_patterns = [
-        "i'm sorry", "i am sorry", "i cannot", "i can't", "i can not",
-        "i'm unable", "i am unable", "cannot help", "can't help",
-        "cannot assist", "i'm not able", "not able to help",
-        "maaf", "mohon maaf", "saya tidak bisa", "saya tidak dapat",
-        "tidak dapat membantu", "tidak bisa membantu"
+        "i'm sorry, but i can't help",
+        "i'm sorry, but i cannot help",
+        "i cannot assist with that",
+        "i can't assist with that",
+        "i'm unable to help with that",
+        "i am unable to help with that",
+        "i cannot help with that",
+        "i can't help with that",
+        "i'm not able to help with that",
+        "saya tidak bisa membantu",
+        "saya tidak dapat membantu",
+        "tidak dapat membantu permintaan",
+        "tidak bisa membantu permintaan",
+        "maaf, saya tidak bisa",
+        "maaf, saya tidak dapat",
+        "mohon maaf, saya tidak bisa",
+        "mohon maaf, saya tidak dapat",
     ]
-    return any(normalized.startswith(p) for p in refusal_patterns)
+    # Pakai "in" bukan startswith, karena penolakan bisa didahului kalimat
+    # pembuka lain, tapi tetap harus frasa LENGKAP (bukan cuma "maaf")
+    return any(p in normalized for p in refusal_patterns)
 
 
 # Client untuk text (OpenAI SDK) — LiteLLM
