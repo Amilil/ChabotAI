@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from backend.constants import SESSION_TIMEOUT
 from backend.messages import MSG_SESSION_TIMEOUT
@@ -26,6 +27,7 @@ async def _timeout_worker(sender_number: str) -> None:
         user_states.pop(sender_number, None)
         user_timeout_tasks.pop(sender_number, None)
         user_locks.pop(sender_number, None)
+        print(f"[TIMING] Session timeout dipicu untuk user {sender_number}: {time.strftime('%H:%M:%S')}")
         await send_text(sender_number, MSG_SESSION_TIMEOUT)
 
 
